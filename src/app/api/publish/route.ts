@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { guardRequest } from '@/lib/api-guard';
+import { guardAdminRequest } from '@/lib/admin-guard';
 import { MAX_LIVE_SOURCES, MAX_VOD_SOURCES } from '@/lib/source-list';
 import { MAX_PUBLISH_BYTES, publishSourceList } from '@/lib/source-list-publish';
 
@@ -11,6 +11,9 @@ const MAX_FIELD_LEN = 2048;
 interface VodOut {
   name: string;
   url: string;
+  detail?: string;
+  isAdult?: boolean;
+  type?: 't4' | 'drpy';
 }
 
 interface LiveOut {
@@ -38,7 +41,11 @@ function normalizePayload(raw: unknown): { name?: string; sources: VodOut[]; liv
     .slice(0, MAX_VOD_SOURCES)
     .map((item) => {
       const o = (item ?? {}) as Record<string, unknown>;
-      return { name: text(o.name, 128), url: url(o.url) };
+      return { name: text(o.name, 128), url: url(o.url),
+        ...(url(o.detail) ? { detail: url(o.detail) } : {}),
+        ...(o.type === 't4' || o.type === 'drpy' ? { type: o.type as 't4' | 'drpy' } : {}),
+        ...(typeof o.isAdult === 'boolean' ? { isAdult: o.isAdult } : {}),
+      };
     })
     .filter((s) => s.url);
 
@@ -57,7 +64,7 @@ function normalizePayload(raw: unknown): { name?: string; sources: VodOut[]; liv
 
 /** 把当前源列表发布到第三方粘贴板，返回可直接填入订阅框的 URL */
 export async function POST(req: Request) {
-  const guarded = guardRequest(req);
+  const guarded = await guardAdminRequest(req);
   if (guarded) return guarded;
 
   let raw: unknown;

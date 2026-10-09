@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 
 /**
- * 主题上下文：light / dark / system，持久化到 localStorage，默认 dark。
+ * 主题上下文：light / dark / system，持久化到 localStorage，默认 light。
  * html 上的 .dark 类由 layout 中的内联脚本先行设置（避免首屏闪烁），此处负责后续切换。
  */
 
@@ -17,8 +17,8 @@ interface ThemeContextValue {
 }
 
 const ThemeContext = createContext<ThemeContextValue>({
-  theme: 'dark',
-  resolved: 'dark',
+  theme: 'light',
+  resolved: 'light',
   setTheme: () => {},
 });
 
@@ -37,17 +37,17 @@ function apply(choice: ThemeChoice): 'light' | 'dark' {
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setThemeState] = useState<ThemeChoice>('dark');
-  const [resolved, setResolved] = useState<'light' | 'dark'>('dark');
+  const [theme, setThemeState] = useState<ThemeChoice>('light');
+  const [resolved, setResolved] = useState<'light' | 'dark'>('light');
 
   useEffect(() => {
-    const stored = (localStorage.getItem(STORAGE_KEY) as ThemeChoice | null) || 'dark';
+    const stored = (localStorage.getItem(STORAGE_KEY) as ThemeChoice | null) || 'light';
     setThemeState(stored);
     setResolved(apply(stored));
 
     const media = window.matchMedia('(prefers-color-scheme: dark)');
     const onChange = () => {
-      const current = (localStorage.getItem(STORAGE_KEY) as ThemeChoice | null) || 'dark';
+      const current = (localStorage.getItem(STORAGE_KEY) as ThemeChoice | null) || 'light';
       if (current === 'system') {
         setResolved(apply('system'));
       }
@@ -69,12 +69,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 export function ThemeToggle() {
   const { theme, resolved, setTheme } = useTheme();
   const next: ThemeChoice = theme === 'light' ? 'dark' : theme === 'dark' ? 'system' : 'light';
-  const label = theme === 'system' ? '跟随系统（当前深色）' : theme === 'dark' ? '深色' : '浅色';
+  const label = theme === 'system' ? `跟随系统（当前${resolved === 'dark' ? '深色' : '浅色'}）` : theme === 'dark' ? '深色' : '浅色';
   const nextLabel = next === 'light' ? '浅色' : next === 'dark' ? '深色' : '跟随系统';
 
   return (
     <button
-      className="p-2 rounded-md text-muted hover:text-content hover:bg-hover transition-colors"
+      className="p-2 rounded-lg text-muted hover:text-content hover:bg-hover transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
       title={`主题：${label}，点击切换为${nextLabel}`}
       aria-label={`切换主题，当前 ${label}`}
       onClick={() => setTheme(next)}

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { buildImageCandidates } from '@/lib/utils';
 
 interface SmartImageProps {
@@ -13,6 +13,7 @@ interface SmartImageProps {
   loading?: 'lazy' | 'eager';
   /** 候选链耗尽后回调，调用方切换占位图等兜底 UI */
   onExhausted?: () => void;
+  fadeIn?: boolean;
 }
 
 /**
@@ -29,12 +30,18 @@ export function SmartImage({
   className,
   loading = 'lazy',
   onExhausted,
+  fadeIn = false,
 }: SmartImageProps) {
   const candidates = buildImageCandidates(url, mode, customProxy);
   const [idx, setIdx] = useState(0);
+  const [loaded, setLoaded] = useState(false);
+  const imageRef = useRef<HTMLImageElement>(null);
 
   // 地址或加载方式变化时重置降级进度
-  useEffect(() => setIdx(0), [url, mode, customProxy]);
+  useEffect(() => {
+    setIdx(0);
+    if (fadeIn) setLoaded(!!imageRef.current?.complete && imageRef.current.naturalWidth > 0);
+  }, [url, mode, customProxy, fadeIn]);
   useEffect(() => {
     if (idx >= candidates.length) onExhausted?.();
     // 候选数组随 url/mode 变化，length 是充分的稳定信号
@@ -45,12 +52,17 @@ export function SmartImage({
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
+      ref={imageRef}
+      key={src}
       src={src}
       alt={alt}
-      className={className}
+      className={`${className ?? ''}${fadeIn ? ' cinema-image-fade' : ''}`}
+      data-loaded={loaded}
+      style={fadeIn ? { opacity: loaded ? 1 : 0 } : undefined}
+      onLoad={() => { if (fadeIn) setLoaded(true); }}
       loading={loading}
       referrerPolicy="no-referrer"
-      onError={() => setIdx((i) => i + 1)}
+      onError={() => { setLoaded(false); setIdx((i) => i + 1); }}
     />
   );
 }

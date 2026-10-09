@@ -146,6 +146,11 @@ export const api = {
     return request<VideoDetail>(`/api/detail?${sp.toString()}`, { signal });
   },
 
+  play: (episode: string, source: SourceConfig, signal?: AbortSignal) => request<{ url: string }>('/api/play', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ episode, source }), signal,
+  }),
+
   douban: (type: 'movie' | 'tv', tag: string, pageStart: number, pageSize: number, signal?: AbortSignal) => {
     const sp = new URLSearchParams({ type, tag, pageStart: String(pageStart), pageSize: String(pageSize) });
     return request<DoubanResponse>(`/api/douban?${sp.toString()}`, { signal });
@@ -172,11 +177,11 @@ export const api = {
   },
 
   /** 点播源探活：以搜索 "test" 的耗时与结果量衡量可用性 */
-  testSource: (url: string) =>
+  testSource: (url: string, type?: SourceConfig['type']) =>
     request<{ ok: boolean; ms: number; count?: number; error?: string }>('/api/source/test', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url }),
+      body: JSON.stringify({ url, type }),
     }),
 
   /** 拉取远程数据源订阅（自动识别 LibreTV-SourceList JSON 与 TVBOX 配置 JSON） */
@@ -298,5 +303,26 @@ async function searchStream(
     });
     return final;
   }
+
+/** 播放页自动选源：最先返回非空剧集的详情胜出，并中止其余请求。 */
+export async function firstAvailableDetail(items: { item: SearchResultItem; source: SourceConfig }[], signal: AbortSignal): Promise<{ item: SearchResultItem; detail: VideoDetail }> {
+  const controllers = items.map(() => new AbortController());
+  const abortAll = () => controllers.forEach((controller) => controller.abort());
+  signal.addEventListener('abort', abortAll, { once: true });
+  if (signal.aborted) abortAll();
+  try {
+    return await Promise.any(items.map(async ({ item, source }, index) => {
+      const detail = await api.detail(item.vodId, source, controllers[index].signal);
+      if (!detail.episodes.some((url) => url.trim())) throw new Error('暂无可播放剧集');
+      return { item, detail };
+    }));
+  } catch {
+    if (signal.aborted) throw new DOMException('请求已取消', 'AbortError');
+    throw new Error('暂时无法获取可用剧集，请稍后重试');
+  } finally {
+    signal.removeEventListener('abort', abortAll);
+    abortAll();
+  }
+}
 
 export type { SearchResponse, SearchResultItem };

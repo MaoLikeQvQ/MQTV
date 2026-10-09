@@ -1,0 +1,48 @@
+# 生产部署：服务器保存为 docker-compose.yml，仅拉取 MQTV 仓库发布的镜像。
+name: mqtv
+services:
+  libretv:
+    image: ${LIBRETV_IMAGE:-ghcr.io/maolikeqvq/mqtv:latest}
+    restart: unless-stopped
+    init: true
+    ports:
+      - "${HOST_BIND:-0.0.0.0}:${HOST_PORT:-18080}:8080"
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: "8080"
+      HOSTNAME: 0.0.0.0
+      DATA_DIR: /app/data
+      DRPY_BASE_URL: http://drpy:5757
+    volumes:
+      - libretv-data:/app/data
+    healthcheck:
+      test: ["CMD", "node", "--input-type=module", "-e", "const r=await fetch('http://127.0.0.1:8080/api/health',{signal:AbortSignal.timeout(4000)});if(!r.ok)process.exit(1)"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+
+  drpy:
+    profiles: [drpy]
+    image: ${DRPY_IMAGE:-ghcr.io/maolikeqvq/mqtv-drpy:latest}
+    restart: unless-stopped
+    init: true
+    expose:
+      - "5757"
+    environment:
+      DRPY_HOST: 0.0.0.0
+      DRPY_API_KEY: ${DRPY_API_KEY:-}
+      DRPY_MODULES: ${DRPY_MODULES:-cctv-public}
+    healthcheck:
+      test: ["CMD", "node", "--input-type=module", "-e", "const r=await fetch('http://127.0.0.1:5757/health',{headers:{'x-api-key':process.env.DRPY_API_KEY},signal:AbortSignal.timeout(4000)});if(!r.ok)process.exit(1)"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+
+volumes:
+  libretv-data:
+    # 迁移已有部署必须指定原来的实际卷名，避免创建空卷。
+    name: ${MQTV_DATA_VOLUME:-mqtv-data}

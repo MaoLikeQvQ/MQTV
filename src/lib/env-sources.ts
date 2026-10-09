@@ -15,7 +15,7 @@ export function getEnvSources(): SourceConfig[] {
       if (typeof item !== 'object' || item === null) {
         throw new Error(`第 ${i + 1} 项不是对象`);
       }
-      const { name, url, detail, isAdult } = item as Record<string, unknown>;
+      const { name, url, detail, isAdult, type } = item as Record<string, unknown>;
       if (typeof name !== 'string' || !name.trim()) {
         throw new Error(`第 ${i + 1} 项缺少 name`);
       }
@@ -28,6 +28,7 @@ export function getEnvSources(): SourceConfig[] {
         url: url.trim().replace(/\/+$/, ''),
         detail: typeof detail === 'string' && detail.trim() ? detail.trim() : undefined,
         isAdult: isAdult === true,
+        ...(type === 't4' || type === 'drpy' ? { type } : {}),
       };
     });
     return list;

@@ -3,6 +3,10 @@ import { guardRequest } from '@/lib/api-guard';
 import { cmsRequestHeaders, parseDetail, parseDetailPageHtml } from '@/lib/cms-parser';
 import { fetchUpstream, getCache, setCache } from '@/lib/fetch-utils';
 import { checkUpstreamAllowed } from '@/lib/ssrf';
+import { isCctvSource } from '@/lib/cctv-source';
+import { checkSourceAllowed, detailSpider } from '@/lib/spider-bridge';
+import { isSpiderSource } from '@/lib/spider-source';
+import { detailCctv } from '@/lib/cctv-spider';
 import type { SourceConfig, VideoDetail } from '@/lib/types';
 
 export const runtime = 'nodejs';
@@ -26,7 +30,7 @@ function parseSource(raw: string | null): SourceConfig | null {
  * 拿不到播放地址时（部分源需要爬详情页）降级到 detail 页 HTML 提取。
  */
 export async function GET(req: Request) {
-  const guarded = guardRequest(req);
+  const guarded = await guardRequest(req);
   if (guarded) return guarded;
 
   const url = new URL(req.url);
@@ -34,7 +38,7 @@ export async function GET(req: Request) {
   const source = parseSource(url.searchParams.get('source'));
   const baseUrl = (url.searchParams.get('baseUrl') || '').trim(); // 可选：详情页根地址
 
-  if (!id || !/^[\w-]+$/.test(id)) {
+  if (!id || id.length > 12000 || !/^[\w-]+$/.test(id)) {
     return NextResponse.json({ error: '无效的视频ID' }, { status: 400 });
   }
   if (!source) {
@@ -44,16 +48,28 @@ export async function GET(req: Request) {
   try {
     // 命中 60s 缓存直接返回（仅缓存成功拿到剧集的结果）
     const detailRootForCache = (source.detail || baseUrl || '').replace(/\/+$/, '');
-    const cacheKey = `detail:${source.url}|${detailRootForCache}|${id}`;
+    const cacheKey = `detail:${source.type || 'cms'}:${source.url}|${detailRootForCache}|${id}`;
     const cached = getCache<VideoDetail>(cacheKey);
     if (cached) {
       return NextResponse.json(cached);
     }
 
     // 用户可控地址发起服务端请求，先过 SSRF 校验（协议白名单 + 内网/保留地址）
-    const listVerdict = await checkUpstreamAllowed(source.url);
+    const listVerdict = await checkSourceAllowed(source);
     if (!listVerdict.ok) {
       return NextResponse.json({ error: listVerdict.reason }, { status: 400 });
+    }
+
+    if (isSpiderSource(source)) {
+      const detail = await detailSpider(source, id);
+      setCache(cacheKey, detail, DETAIL_CACHE_TTL);
+      return NextResponse.json(detail);
+    }
+
+    if (isCctvSource(source.url)) {
+      const detail = await detailCctv(source, id);
+      setCache(cacheKey, detail, DETAIL_CACHE_TTL);
+      return NextResponse.json(detail);
     }
 
     let resolved: VideoDetail | null = null;

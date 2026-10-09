@@ -20,7 +20,7 @@ const WINDOW_MS = 24 * 60 * 60 * 1000;
  * 解析结果（按频道索引、24h 时间窗裁剪）整体缓存 6 小时；单频道按需查询。
  */
 export async function GET(req: Request) {
-  const guarded = guardRequest(req);
+  const guarded = await guardRequest(req);
   if (guarded) return guarded;
 
   const sp = new URL(req.url).searchParams;

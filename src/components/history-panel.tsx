@@ -143,7 +143,7 @@ function HistoryItem({ item }: { item: HistoryEntry }) {
   const envSources = useAppStore((s) => s.envSources);
   const { toast } = useToast();
   const [imgFailed, setImgFailed] = useState(false);
-  const source = resolveSource({ customAPIs, envSources }, item.sourceKey);
+  const source = resolveSource({ customAPIs, envSources }, item.sourceKey, { url: item.sourceUrl, type: item.sourceType });
 
   const hasPercent =
     item.playbackPosition > 10 && item.duration > 0 && item.playbackPosition < item.duration * 0.95;
@@ -154,7 +154,7 @@ function HistoryItem({ item }: { item: HistoryEntry }) {
     vodId: item.vodId,
     index: item.episodeIndex,
     title: item.title,
-    sourceUrl: source?.url,
+    sourceUrl: source?.url, sourceType: source?.type,
     detail: source?.detail,
   });
 
@@ -167,7 +167,7 @@ function HistoryItem({ item }: { item: HistoryEntry }) {
           onClick: () => {
             void upsertHistory({
               sourceKey: item.sourceKey,
-              sourceUrl: item.sourceUrl,
+              sourceUrl: item.sourceUrl, sourceType: item.sourceType,
               vodId: item.vodId,
               title: item.title,
               pic: item.pic,

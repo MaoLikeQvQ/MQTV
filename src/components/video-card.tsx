@@ -20,7 +20,7 @@ export interface AggregatedGroup {
 
 function buildGroup(name: string, year: string | undefined, items: SearchResultItem[]): AggregatedGroup {
   return {
-    key: `${name}|${year ?? ''}|${items.map((i) => `${i.sourceKey}_${i.vodId}`).join(',')}`,
+    key: JSON.stringify([name, year ?? '']),
     name,
     year,
     typeName: items.find((i) => i.typeName)?.typeName,
@@ -30,40 +30,38 @@ function buildGroup(name: string, year: string | undefined, items: SearchResultI
   };
 }
 
-/**
- * 把扁平的跨源搜索结果按「同名影片」聚合：
- * - 以名称分桶；桶内年份不一致时（同名翻拍）按年份拆分，无年份的条目并入年份桶；
- * - 保持传入顺序（搜索结果已按名称排序）。
- */
+/** 按首次出现的位置合并同名影片；明确不同年份的翻拍另列，缺失年份补入最先出现的版本。 */
 export function aggregateResults(list: SearchResultItem[]): AggregatedGroup[] {
-  const byName = new Map<string, SearchResultItem[]>();
-  for (const item of list) {
-    const k = (item.name || '').trim();
-    if (!k) continue;
-    if (!byName.has(k)) byName.set(k, []);
-    byName.get(k)!.push(item);
-  }
   const groups: AggregatedGroup[] = [];
-  for (const [name, items] of byName) {
-    const years = [...new Set(items.map((i) => i.year).filter(Boolean))] as string[];
-    if (years.length > 1) {
-      for (const y of years) {
-        groups.push(buildGroup(name, y, items.filter((i) => i.year === y)));
-      }
-      const noYear = items.filter((i) => !i.year);
-      if (noYear.length) groups.push(buildGroup(name, undefined, noYear));
+  const byName = new Map<string, AggregatedGroup[]>();
+  const seen = new Set<string>();
+  for (const item of list) {
+    const name = (item.name || '').trim();
+    if (!name) continue;
+    const itemKey = JSON.stringify([item.sourceKey, item.vodId]);
+    if (seen.has(itemKey)) continue;
+    seen.add(itemKey);
+    const year = item.year?.trim() || undefined;
+    const versions = byName.get(name) ?? [];
+    const group = versions.find((g) => !year || !g.year || g.year === year);
+    if (group) {
+      group.items.push(item);
+      // 补全信息时保留初始 key 和位置，避免晚到的年份触发卡片重新挂载。
+      group.year ||= year;
+      group.typeName ||= item.typeName;
+      group.pic ||= item.pic;
+      group.remarks ||= item.remarks;
     } else {
-      groups.push(buildGroup(name, years[0], items));
+      const next = buildGroup(name, year, [item]);
+      versions.push(next);
+      byName.set(name, versions);
+      groups.push(next);
     }
   }
   return groups;
 }
 
-/**
- * 聚合影片卡片：
- * - 单源：点击直接打开该源详情（与旧体验一致）；
- * - 多源：显示「N 个来源」徽章，点击展开各源列表，选择具体源后打开详情。
- */
+/** 聚合影片只展示一张卡片，点击直接进入播放详情页，线路在播放页展示。 */
 export function AggregatedCard({
   group,
   onOpen,
@@ -74,25 +72,18 @@ export function AggregatedCard({
   const imageProxyMode = useAppStore((s) => s.imageProxyMode);
   const customImageProxy = useAppStore((s) => s.customImageProxy);
   const [imgFailed, setImgFailed] = useState(false);
-  const [expanded, setExpanded] = useState(false);
   const showImg = !!group.pic && !imgFailed;
 
-  const multi = group.items.length > 1;
   const adult = useMemo(() => group.items.some((i) => i.isAdult), [group.items]);
 
-  const activate = () => {
-    if (multi) setExpanded((v) => !v);
-    else onOpen(group.items[0]);
-  };
+  const activate = () => onOpen(group.items[0]);
 
   return (
-    <div className={cn('card', !multi && 'hover:scale-[1.02] hover:shadow-md', multi && expanded && 'ring-1 ring-accent/40')}>
-      {/* 不用 h-full：展开面板需要撑高卡片，等高裁切会让面板不可见 */}
+    <div className="card h-full hover:scale-[1.02] hover:shadow-md">
       <div
         className="flex h-full cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60"
         role="button"
         tabIndex={0}
-        aria-expanded={multi ? expanded : undefined}
         onClick={activate}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
@@ -112,22 +103,12 @@ export function AggregatedCard({
               onExhausted={() => setImgFailed(true)}
             />
             <div className="absolute inset-0 bg-gradient-to-r from-black/30 to-transparent" />
-            {multi && (
-              <span className="absolute top-1.5 left-1.5 tag bg-black/70 text-accent font-medium">
-                {group.items.length} 源
-              </span>
-            )}
           </div>
         ) : (
           <div className="relative flex-shrink-0 w-[105px] sm:w-[120px] aspect-[2/3] bg-chip flex items-center justify-center">
             <svg className="w-8 h-8 text-faint" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 4v16m10-16v16M3 6a1 1 0 011-1h1a1 1 0 011 1v12a1 1 0 01-1 1H4a1 1 0 01-1-1V6zm4 0a1 1 0 011-1h1a1 1 0 011 1v12a1 1 0 01-1 1h-1a1 1 0 01-1-1V6zm8 0a1 1 0 011-1h1a1 1 0 011 1v12a1 1 0 01-1 1h-1a1 1 0 01-1-1V6zm4 0a1 1 0 011-1h1a1 1 0 011 1v12a1 1 0 01-1 1h-1a1 1 0 01-1-1V6z" />
             </svg>
-            {multi && (
-              <span className="absolute top-1.5 left-1.5 tag bg-black/70 text-accent font-medium">
-                {group.items.length} 源
-              </span>
-            )}
           </div>
         )}
 
@@ -143,59 +124,11 @@ export function AggregatedCard({
             </div>
             <p className="text-xs text-muted line-clamp-2 mb-2">{group.remarks || '暂无介绍'}</p>
           </div>
-          <div className="flex items-center justify-between mt-auto pt-1.5 border-t border-line">
-            <span className="tag bg-chip text-muted truncate max-w-[80%]">
-              {multi ? `${group.items.length} 个来源` : group.items[0].sourceName}
-            </span>
-            {multi && (
-              <svg
-                className={cn('w-4 h-4 text-faint transition-transform', expanded && 'rotate-180')}
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-                aria-hidden
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-              </svg>
-            )}
+          <div className="mt-auto pt-1.5 border-t border-line text-xs text-accent">
+            立即播放 ↗
           </div>
         </div>
       </div>
-
-      {multi && expanded && (
-        <div className="border-t border-line p-2.5 animate-fade-in">
-          <p className="text-[10px] text-faint mb-1.5">选择来源播放</p>
-          <div className="flex flex-wrap gap-1.5">
-            {group.items.map((item) => (
-              <button
-                key={`${item.sourceKey}_${item.vodId}`}
-                className={cn(
-                  'group inline-flex items-center gap-1.5 max-w-full rounded-lg border px-2.5 py-1.5',
-                  'text-xs transition-all cursor-pointer',
-                  'border-line bg-chip hover:border-accent hover:bg-accent/10',
-                  item.isAdult && 'border-pink-500/30'
-                )}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onOpen(item);
-                }}
-                aria-label={`使用 ${item.sourceName} 播放`}
-              >
-                <span className="font-medium text-content truncate max-w-[9em]">{item.sourceName}</span>
-                <span className="text-faint truncate max-w-[7em]">{item.remarks || '暂无介绍'}</span>
-                <svg
-                  className="w-3.5 h-3.5 text-accent shrink-0 transition-transform group-hover:scale-110"
-                  fill="currentColor"
-                  viewBox="0 0 24 24"
-                  aria-hidden
-                >
-                  <path d="M8 5v14l11-7z" />
-                </svg>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

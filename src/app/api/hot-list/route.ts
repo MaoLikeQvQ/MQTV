@@ -6,7 +6,7 @@ export const runtime = 'nodejs';
 
 /** 影视热榜（经 60s API 免 key）：豆瓣五个周榜 + 百度热播剧，服务端转发 + 缓存 */
 export async function GET(req: Request) {
-  const guarded = guardRequest(req);
+  const guarded = await guardRequest(req);
   if (guarded) return guarded;
 
   const id = new URL(req.url).searchParams.get('id') || '';

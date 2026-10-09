@@ -32,7 +32,9 @@ export default function AboutPage() {
           <h2 className="text-base font-semibold text-content mb-2.5">隐私与数据</h2>
           <p className="text-sm text-muted leading-relaxed">
             你的搜索历史、观看进度等数据仅保存在本设备浏览器中（IndexedDB），不会上传到服务器。
-            聚合搜索请求由服务端代理转发，第三方数据源不会看到你的 IP 地址。
+            网站会在浏览器中保存随机访客标识，用于统计新增与回访；服务端仅保存标识的哈希和访问日期，
+            不将该标识用作登录凭证，也不通过统计接口收集搜索内容、播放记录或 IP 地址。
+            清除站点数据后会生成新标识。聚合搜索请求由服务端代理转发。
           </p>
         </section>
 

@@ -6,7 +6,7 @@ export const runtime = 'nodejs';
 
 /** Bangumi 每日放送（免 key）：服务端直连 + 缓存，作为首页推荐的备用数据源 */
 export async function GET(req: Request) {
-  const guarded = guardRequest(req);
+  const guarded = await guardRequest(req);
   if (guarded) return guarded;
 
   try {

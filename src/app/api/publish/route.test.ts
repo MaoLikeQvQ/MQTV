@@ -1,6 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { POST } from './route';
-import { SESSION_COOKIE, signSession } from '@/lib/auth';
 
 /**
  * 发布接口单测：登录守卫、字段白名单与条数上限。
@@ -25,7 +24,7 @@ vi.mock('@/lib/source-list-publish', () => ({
 function makeRequest(body: unknown, options?: { authenticated?: boolean }): Request {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (options?.authenticated !== false) {
-    headers.cookie = `${SESSION_COOKIE}=${signSession().token}`;
+    headers.authorization = 'Bearer isolated-management-key';
   }
   return new Request('https://local.test/api/publish', {
     method: 'POST',
@@ -35,7 +34,7 @@ function makeRequest(body: unknown, options?: { authenticated?: boolean }): Requ
 }
 
 beforeAll(() => {
-  process.env.PASSWORD = 'test-password';
+  process.env.ADMIN_KEY = 'isolated-management-key';
 });
 
 beforeEach(() => {
@@ -65,7 +64,7 @@ describe('POST /api/publish', () => {
       makeRequest({
         name: '我的源',
         sources: [
-          { name: 'A', url: 'https://a.example.com/api.php/provide/vod', evil: 'should-not-appear' },
+          { name: 'A', url: 'https://a.example.com/api.php/provide/vod', detail: 'https://a.example.com/detail', isAdult: true, evil: 'should-not-appear' },
           { name: 'B', url: 'file:///etc/passwd' },
         ],
         liveSources: [{ name: 'L', url: 'https://live.example.com/tv.m3u', epg: 'https://epg.example.com/e.xml' }],
@@ -76,6 +75,7 @@ describe('POST /api/publish', () => {
     const published = state.publishedText ?? '';
     expect(published).toContain('a.example.com');
     expect(published).toContain('live.example.com/tv.m3u');
+    expect(JSON.parse(published).sources[0]).toMatchObject({ detail: 'https://a.example.com/detail', isAdult: true });
     // 非 http 地址、未知字段都不能出现在发布内容里
     expect(published).not.toContain('etc/passwd');
     expect(published).not.toContain('evil');

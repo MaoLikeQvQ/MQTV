@@ -2,6 +2,8 @@
 
 import { api } from './client-api';
 import { normalizeSubscriptionUrl } from './source-list';
+import { saveCacheSettings } from './video-cache';
+import { DEFAULT_SITE } from './site-config-types';
 import { useAppStore } from './store';
 import { describeParseStats } from './tvbox-parser';
 import type { AuthStatusResponse, SubscriptionParseStats } from './types';
@@ -95,18 +97,36 @@ export async function syncEnvSubscriptions(subs: { url: string; name?: string }[
   }
 }
 
-/**
- * 应用 /api/status 下发的部署者预置数据（预置点播源 / 预置直播源 / 预置订阅）。
- *
- * 调用点有两处，缺一不可：
- * - Providers 首屏拿到 /api/status 后调用（此时可能尚未登录）；
- * - AuthProvider 登录成功后补调一次——预置订阅要经鉴权接口 /api/source-list 拉取，
- *   首屏那次在登录前会 401 静默失败，不补调则本次会话内不会出现预置订阅。
- *
- * 重复调用是安全的：setEnvSources / setLiveEnvSources 幂等，syncEnvSubscriptions
- * 对已同步（24h 内）的订阅会跳过，对已成功过的订阅也不会重复导入。
- */
+/** 后台站点覆盖运行时设置并保留旧设备配置；无 site 字段时兼容旧预置接口。 */
 export async function applyEnvPresets(status: AuthStatusResponse): Promise<void> {
+  if (status.site) {
+    const site = { ...DEFAULT_SITE, ...status.site };
+    const current = useAppStore.getState();
+    const local = current.managedLocalConfig ?? {
+      customAPIs: current.customAPIs, selectedKeys: current.selectedKeys,
+      subscriptions: current.subscriptions, liveSubscriptions: current.liveSubscriptions,
+      liveSelectedUrls: current.liveSelectedUrls,
+      yellowFilter: current.yellowFilter, adFilter: current.adFilter,
+      doubanEnabled: current.doubanEnabled, recommendSource: current.recommendSource,
+      recommendSourceTouched: current.recommendSourceTouched, autoplayNext: current.autoplayNext,
+      imageProxyMode: current.imageProxyMode, imageProxyModeTouched: current.imageProxyModeTouched,
+      customImageProxy: current.customImageProxy,
+    };
+    const sources = status.defaultSources ?? [];
+    const liveSources = status.defaultLiveSources ?? [];
+    useAppStore.setState({
+      managed: true, managedLocalConfig: local,
+      envSources: sources, customAPIs: [], subscriptions: [],
+      selectedKeys: sources.filter((s) => !(site.yellowFilter && s.isAdult)).map((s) => s.key),
+      liveEnvSources: liveSources, liveSubscriptions: [], liveSelectedUrls: liveSources.map((s) => s.url),
+      yellowFilter: site.yellowFilter, adFilter: site.adFilter, doubanEnabled: site.doubanEnabled,
+      recommendSource: site.recommendSource, autoplayNext: site.autoplayNext,
+      imageProxyMode: site.imageMode, customImageProxy: site.customImageProxy,
+    });
+    saveCacheSettings({ enabled: site.cacheEnabled });
+    return;
+  }
+
   if (Array.isArray(status.defaultSources)) {
     useAppStore.getState().setEnvSources(status.defaultSources);
   }

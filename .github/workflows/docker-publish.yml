@@ -1,34 +1,26 @@
-name: docker-publish
-
-# 推送版本 tag（如 v2.0.1）时自动构建并发布镜像到 GHCR 与 Docker Hub；
-# 也可在 Actions 页面手动触发。
-# GHCR 使用内置 GITHUB_TOKEN，无需配置 secrets；Docker Hub 需在仓库
-# Settings → Secrets and variables → Actions 配置 DOCKER_USERNAME 与
-# DOCKER_PASSWORD（Docker Hub 的 Access Token），未配置时自动降级为仅发布 GHCR。
-#
-# 多架构构建拆分：amd64 与 arm64 各自跑在原生 runner 上（GitHub 公开仓库
-# 免费提供 ubuntu-24.04-arm），按 digest 推送后合并 manifest。QEMU 跨架构
-# 模拟 npm ci / next build 极慢且不稳（Illegal instruction 崩溃），不再使用。
-# Docker Hub 不重新构建：merge 阶段用 imagetools 把 GHCR 的同一组 digest
-# 复制过去，两个 registry 的多架构镜像 digest 完全一致。
+name: MQTV CI/CD
 
 on:
+  pull_request:
+    branches: [main]
   push:
-    tags:
-      - 'v*'
+    branches: [main]
+    tags: ['v*']
   workflow_dispatch:
+
+# Do not interrupt an update while a server is replacing containers.
+concurrency:
+  group: mqtv-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
-  packages: write
 
 env:
-  REGISTRY: ghcr.io
-  # Docker Hub 双发布目标（固定仓库，无需按 owner 推导）
-  DOCKERHUB_IMAGE: docker.io/bestzwei/libretv
+  APP_IMAGE: ghcr.io/maolikeqvq/mqtv
+  DRPY_IMAGE: ghcr.io/maolikeqvq/mqtv-drpy
 
 jobs:
-  # 先跑类型检查与单测，避免把坏版本推成镜像
   verify:
     runs-on: ubuntu-latest
     steps:
@@ -37,156 +29,142 @@ jobs:
         with:
           node-version: 22
           cache: npm
-
-      # tag 触发时强制 tag 与 package.json 版本一致，避免镜像标签与 /api/status 返回值不一致
-      - name: 校验 tag 与 package.json 版本一致
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: |
-          tag="${GITHUB_REF_NAME#v}"
-          pkg="$(node -p "require('./package.json').version")"
-          if [ "$tag" != "$pkg" ]; then
-            echo "::error::tag v${tag} 与 package.json 版本 ${pkg} 不一致。请改用 npm version ${tag} 更新版本后再推 tag。"
-            exit 1
-          fi
-
+      - name: Reject private release files
+        run: node scripts/check-release-files.mjs
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      - name: Check deployment script
+        run: |
+          bash -n scripts/deploy.sh
+          node --test scripts/deploy-check.mjs
 
-  build:
+  publish:
+    if: github.event_name != 'pull_request'
     needs: verify
-    strategy:
-      fail-fast: false
-      matrix:
-        platform: [linux/amd64, linux/arm64]
-    runs-on: ${{ matrix.platform == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      app_image: ${{ env.APP_IMAGE }}@${{ steps.app.outputs.digest }}
+      drpy_image: ${{ env.DRPY_IMAGE }}@${{ steps.drpy.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
-
-      # GHCR 镜像名不允许大写，统一转小写（owner/Repo → owner/repo）
-      - name: 计算镜像名
-        id: image
-        run: echo "name=${REGISTRY}/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
-
       - uses: docker/setup-buildx-action@v3
-
       - uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      # tag v2.0.1 → 2.0.1 / 2.0 / latest 三个标签（在 merge job 里统一打）
-      - id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ steps.image.outputs.name }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest
-
-      # 按架构各推一个镜像层（无 tag，由 digest 标识），标签在 merge 阶段合并
-      - id: build
+      - name: Image tags
+        id: tags
+        env:
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          for image in "$APP_IMAGE" "$DRPY_IMAGE"; do
+            if [ "$image" = "$APP_IMAGE" ]; then key=app; else key=drpy; fi
+            {
+              echo "$key<<TAGS"
+              echo "$image:sha-$GITHUB_SHA"
+              if [ "$REF" = refs/heads/main ]; then echo "$image:latest"; fi
+              if [[ "$REF" == refs/tags/v* ]]; then echo "$image:$REF_NAME"; fi
+              echo TAGS
+            } >> "$GITHUB_OUTPUT"
+          done
+      - name: Build and publish MQTV
+        id: app
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: ${{ matrix.platform }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          outputs: type=image,name=${{ steps.image.outputs.name }},push-by-digest=true,name-canonical=true,push=true
-
-      - name: 导出 digest
-        run: |
-          mkdir -p "${{ runner.temp }}/digests"
-          digest="${{ steps.build.outputs.digest }}"
-          touch "${{ runner.temp }}/digests/${digest#sha256:}"
-
-      - name: 上传 digest
-        uses: actions/upload-artifact@v4
+          file: Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.tags.outputs.app }}
+          labels: org.opencontainers.image.source=https://github.com/MaoLikeQvQ/MQTV
+          cache-from: type=gha,scope=mqtv
+          cache-to: type=gha,mode=max,scope=mqtv
+      - name: Build and publish drpy
+        id: drpy
+        uses: docker/build-push-action@v6
         with:
-          name: digests-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
-          path: ${{ runner.temp }}/digests/*
-          if-no-files-found: error
-          retention-days: 1
+          context: .
+          file: Dockerfile.drpy
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.tags.outputs.drpy }}
+          labels: org.opencontainers.image.source=https://github.com/MaoLikeQvQ/MQTV
+          cache-from: type=gha,scope=mqtv-drpy
+          cache-to: type=gha,mode=max,scope=mqtv-drpy
+      - name: Smoke test published images without private data
+        env:
+          APP_RELEASE: ${{ env.APP_IMAGE }}@${{ steps.app.outputs.digest }}
+          DRPY_RELEASE: ${{ env.DRPY_IMAGE }}@${{ steps.drpy.outputs.digest }}
+        run: |
+          set -euo pipefail
+          app="mqtv-smoke-$GITHUB_RUN_ID"
+          drpy="mqtv-drpy-smoke-$GITHUB_RUN_ID"
+          trap 'docker rm -fv "$app" "$drpy" >/dev/null 2>&1 || true' EXIT
+          docker pull "$APP_RELEASE"
+          docker pull "$DRPY_RELEASE"
+          docker run -d --name "$app" --network none \
+            -e CATALOG_AUTO_SYNC=0 -e DRPY_ENABLED=0 "$APP_RELEASE"
+          docker run -d --name "$drpy" --network none \
+            -e DRPY_API_KEY=ci-smoke-test-key "$DRPY_RELEASE"
+          ready=0
+          for attempt in $(seq 1 60); do
+            if docker exec "$app" node -e "fetch('http://127.0.0.1:8080/api/health',{signal:AbortSignal.timeout(2000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" \
+              && docker exec "$drpy" node -e "fetch('http://127.0.0.1:5757/health',{headers:{'x-api-key':'ci-smoke-test-key'},signal:AbortSignal.timeout(2000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          [ "$ready" = 1 ] || { echo 'Published image health checks failed'; exit 1; }
+          docker exec "$app" node -e "(async()=>{const r=await fetch('http://127.0.0.1:8080/api/status',{signal:AbortSignal.timeout(5000)});if(!r.ok)throw Error('status request failed');const data=await r.json();for(const key of ['defaultSources','defaultLiveSources','defaultSubscriptions'])if(!Array.isArray(data[key])||data[key].length)throw Error('Image must start with empty private source lists');})().catch(e=>{console.error(e.message);process.exit(1)})"
 
-  merge:
-    needs: build
+  deploy:
+    if: github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true'
+    needs: publish
     runs-on: ubuntu-latest
+    concurrency:
+      group: mqtv-production-deploy
+      cancel-in-progress: false
     env:
-      # secrets 上下文不能直接用于 step 的 if（Unrecognized named-value），
-      # 在 job 级 env 先行求值为 true/false，各步骤再用 env 上下文判断
-      HAS_DOCKERHUB_CREDS: ${{ secrets.DOCKER_PASSWORD != '' }}
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+      DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/opt/mqtv' }}
+      APP_RELEASE: ${{ needs.publish.outputs.app_image }}
+      DRPY_RELEASE: ${{ needs.publish.outputs.drpy_image }}
     steps:
-      - name: 下载各架构 digest
-        uses: actions/download-artifact@v4
-        with:
-          path: ${{ runner.temp }}/digests
-          pattern: digests-*
-          merge-multiple: true
-
-      - name: 计算镜像名
-        id: image
-        run: echo "name=${REGISTRY}/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
-
-      - uses: docker/setup-buildx-action@v3
-
-      - uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      # Docker Hub 双发布：凭据未配置时整段跳过（仅发布 GHCR），不影响既有流程
-      - name: 登录 Docker Hub
-        if: env.HAS_DOCKERHUB_CREDS == 'true'
-        uses: docker/login-action@v3
-        with:
-          registry: docker.io
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ steps.image.outputs.name }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest
-
-      # 与 GHCR 同一组标签规则；标签在各自的 imagetools create 里使用
-      - id: meta-hub
-        if: env.HAS_DOCKERHUB_CREDS == 'true'
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.DOCKERHUB_IMAGE }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest
-
-      # 纯 registry 元数据操作：把 build job 已推上来的两个架构 digest
-      # 组装成多架构 manifest 并打标签。不要在这里用 build-push-action——
-      # 那会触发一次重新构建（无 context 时更会直接失败）。
-      # 标签从各自 meta 步骤的 outputs.json（单行 JSON）经 jq 展开：
-      # 1) 不要用 DOCKER_METADATA_OUTPUT_JSON 环境变量——两个 meta 步骤会互相覆盖；
-      # 2) 不要内插多行的 outputs.tags——实测在命令替换里只有第一个 tag 生效
-      #    （v2.12.5/v2.12.6 两次发布都只打上了版本号 tag，主.次 与 latest 未更新）。
-      - name: 创建并推送多架构 manifest（GHCR）
-        working-directory: ${{ runner.temp }}/digests
+      - uses: actions/checkout@v4
+      - name: Deploy exact published images
+        shell: bash
         run: |
-          docker buildx imagetools create \
-            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< '${{ steps.meta.outputs.json }}') \
-            $(printf '${{ steps.image.outputs.name }}@sha256:%s ' *)
-
-      # 跨 registry 复制：从 GHCR 的架构 digest 拉取后推到 Docker Hub，
-      # 镜像内容（含 manifest digest）与 GHCR 完全一致，无需重新构建
-      - name: 复制多架构 manifest 到 Docker Hub
-        if: env.HAS_DOCKERHUB_CREDS == 'true'
-        working-directory: ${{ runner.temp }}/digests
-        run: |
-          docker buildx imagetools create \
-            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< '${{ steps.meta-hub.outputs.json }}') \
-            $(printf '${{ steps.image.outputs.name }}@sha256:%s ' *)
+          set -euo pipefail
+          : "${DEPLOY_HOST:?Configure DEPLOY_HOST}"
+          : "${DEPLOY_USER:?Configure DEPLOY_USER}"
+          : "${DEPLOY_SSH_KEY:?Configure DEPLOY_SSH_KEY}"
+          : "${DEPLOY_KNOWN_HOSTS:?Configure verified DEPLOY_KNOWN_HOSTS}"
+          [[ "$DEPLOY_HOST" =~ ^[a-zA-Z0-9._-]+$ ]] && [[ "$DEPLOY_HOST" != -* ]]
+          [[ "$DEPLOY_USER" =~ ^[a-zA-Z0-9_-]+$ ]] && [[ "$DEPLOY_USER" != -* ]]
+          [[ "$DEPLOY_PORT" =~ ^[0-9]+$ ]]
+          [[ "$DEPLOY_PATH" =~ ^/[a-zA-Z0-9/_-]+$ ]]
+          [[ "$APP_RELEASE" =~ ^ghcr.io/maolikeqvq/mqtv@sha256:[a-f0-9]{64}$ ]]
+          [[ "$DRPY_RELEASE" =~ ^ghcr.io/maolikeqvq/mqtv-drpy@sha256:[a-f0-9]{64}$ ]]
+          install -d -m 700 "$HOME/.ssh"
+          key="$RUNNER_TEMP/mqtv-deploy-key"
+          hosts="$RUNNER_TEMP/mqtv-known-hosts"
+          trap 'rm -f "$key" "$hosts"' EXIT
+          umask 077
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$key"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$hosts"
+          ssh -i "$key" -p "$DEPLOY_PORT" \
+            -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=$hosts" -o ConnectTimeout=15 \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "bash -s -- '$DEPLOY_PATH' '$APP_RELEASE' '$DRPY_RELEASE'" < scripts/deploy.sh

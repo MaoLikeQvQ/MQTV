@@ -1,9 +1,10 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { POST } from './route';
+import type { SearchResponse, SearchStreamEvent } from '@/lib/types';
 import { SESSION_COOKIE, signSession } from '@/lib/auth';
 
 /**
- * 聚合搜索接口单测：跨源聚合、同源去重、精确命中置顶、成人内容过滤、
+ * 聚合搜索接口单测：跨源聚合、同源去重、完成顺序稳定、成人内容过滤、
  * 失败源不影响整体、SSRF 字面量拒绝。上游一律 mock fetch，无真实网络。
  */
 
@@ -61,6 +62,38 @@ afterEach(() => {
 });
 
 describe('POST /api/search', () => {
+  it('央视适配沿用聚合搜索并读取官方分页，返回可用于详情的ID', async () => {
+    const fetchSpy = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      const page = url.searchParams.get('page');
+      expect(url.searchParams.get('qtext')).toBe('央视分页验证');
+      expect(url.searchParams.has('ac')).toBe(false);
+      return new Response(JSON.stringify({ totalpage: 2, list: [{ all_title: `央视分页验证${page}`,
+        urllink: `https://tv.cctv.com/2026/10/08/VIDEpage${page}.shtml` }] }));
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+    const response = await POST(makeRequest({ wd: '央视分页验证', sources: [{
+      key: 'cctv', name: '央视公开点播', url: 'https://search.cctv.com/ifsearch.php',
+    }] }));
+    const data = await response.json() as SearchResponse;
+    expect(data.failures).toEqual([]);
+    expect(data.list.map((item) => item.name)).toEqual(['央视分页验证1', '央视分页验证2']);
+    expect(Buffer.from(data.list[0].vodId, 'base64url').toString()).toContain('tv.cctv.com');
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('目录超过50个源时，末尾的央视源仍参与搜索', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify(
+      String(input).includes('search.cctv.com') ? { totalpage: 1, list: [{
+        all_title: '目录末尾验证', urllink: 'https://tv.cctv.com/2026/10/08/VIDElast.shtml',
+      }] } : { pagecount: 1, list: [] }
+    ))));
+    const response = await POST(makeRequest({ wd: '目录末尾验证', sources: [
+      ...Array.from({ length: 50 }, (_, i) => ({ ...SOURCES[0], key: `cms${i}` })),
+      { key: 'last', name: '央视公开点播', url: 'https://search.cctv.com/ifsearch.php' },
+    ] }));
+    expect((await response.json() as SearchResponse).list).toMatchObject([{ sourceKey: 'last', name: '目录末尾验证' }]);
+  });
   it('聚合多源结果：同源去重、成人内容过滤、失败源进 failures', async () => {
     mockUpstream();
     const res = await POST(makeRequest({ wd: '测试剧', sources: SOURCES, filterAdult: true }));
@@ -81,11 +114,73 @@ describe('POST /api/search', () => {
     expect(data.failures[0].error).toContain('500');
   });
 
-  it('精确命中（忽略标点差异）排在最前', async () => {
-    mockUpstream();
-    const res = await POST(makeRequest({ wd: '测试剧', sources: [SOURCES[0]], filterAdult: true }));
-    const data = (await res.json()) as { list: Array<{ name: string }> };
-    expect(data.list[0]?.name).toBe('测试剧');
+  it('保持源内返回顺序，不在结束时把精确命中重新置顶', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(cmsList([
+      { vod_id: 2, vod_name: '顺序检测外传' },
+      { vod_id: 1, vod_name: '顺序检测' },
+    ]))));
+    const res = await POST(makeRequest({ wd: '顺序检测', sources: [SOURCES[0]], filterAdult: true }));
+    const data = await res.json() as SearchResponse;
+    expect(data.list.map((i) => i.name)).toEqual(['顺序检测外传', '顺序检测']);
+  });
+
+  it.each([false, true])('并发请求，按完成顺序合并并缓存，stream=%s', async (stream) => {
+    const wd = `并发顺序${stream}`;
+    let releaseSlow!: () => void;
+    let releaseFast!: () => void;
+    const slow = new Promise<void>((resolve) => { releaseSlow = resolve; });
+    const fast = new Promise<void>((resolve) => { releaseFast = resolve; });
+    const fetchSpy = vi.fn(async (input: RequestInfo | URL) => {
+      const isSlow = String(input).includes('cms-a.example');
+      await (isSlow ? slow : fast);
+      return new Response(cmsList([
+        { vod_id: 1, vod_name: `${wd}${isSlow ? '慢源' : '快源外传'}` },
+        { vod_id: 2, vod_name: wd },
+        { vod_id: 3, vod_name: '福利速递', type_name: '福利视频' },
+        { vod_id: 4, vod_name: '完全无关的影片' },
+      ]));
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+    const responsePromise = POST(makeRequest({ wd, sources: SOURCES, filterAdult: true }, stream));
+    // 两个请求均已发出才能放行，验证慢源没有阻塞快源启动。
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(2));
+    releaseFast();
+    let data: SearchResponse;
+    if (stream) {
+      const res = await responsePromise;
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      const first = JSON.parse(decoder.decode((await reader.read()).value!).trim()) as SearchStreamEvent;
+      expect(first.type).toBe('source');
+      if (first.type !== 'source') throw new Error('快源应先推送');
+      expect(first.sourceKey).toBe('b');
+      expect(first.list.map((i) => i.name)).toEqual([`${wd}快源外传`, wd]);
+      releaseSlow();
+      let rest = '';
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        rest += decoder.decode(chunk.value, { stream: true });
+      }
+      const events = rest.trim().split('\n').map((line) => JSON.parse(line) as SearchStreamEvent);
+      const final = events.at(-1)!;
+      expect(final.type).toBe('done');
+      if (final.type !== 'done') throw new Error('缺少最终结果');
+      data = final;
+      const second = events[0];
+      expect(second.type).toBe('source');
+      if (second.type !== 'source') throw new Error('缺少慢源结果');
+      expect(data.list).toEqual([...first.list, ...second.list]);
+    } else {
+      // 等快源完成解析，再让慢源结束。
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      releaseSlow();
+      data = await (await responsePromise).json() as SearchResponse;
+    }
+    expect(data.list.map((i) => i.sourceKey)).toEqual(['b', 'b', 'a', 'a']);
+    const cached = await POST(makeRequest({ wd, sources: SOURCES, filterAdult: true }));
+    expect((await cached.json() as SearchResponse).list).toEqual(data.list);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
   it('内网字面量地址在发起请求前被 SSRF 校验拒绝', async () => {
@@ -123,22 +218,13 @@ describe('POST /api/search', () => {
     expect(lines[lines.length - 1].type).toBe('done');
   });
 
-  it('未登录返回 401，未配置密码返回 503', async () => {
+  it('前台无需 Cookie 或 PASSWORD，仍执行请求校验', async () => {
     vi.stubGlobal('fetch', vi.fn());
-    const saved = process.env.PASSWORD;
-    delete process.env.PASSWORD;
-    try {
-      const noPassword = await POST(makeRequest({ wd: 'x', sources: SOURCES }));
-      expect(noPassword.status).toBe(503);
-    } finally {
-      process.env.PASSWORD = saved;
-    }
-    const noCookie = new Request('https://local.test/api/search', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ wd: 'x', sources: SOURCES }),
+    vi.stubEnv('PASSWORD', '');
+    const request = new Request('https://local.test/api/search', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ wd: '', sources: [] }),
     });
-    const unauthorized = await POST(noCookie);
-    expect(unauthorized.status).toBe(401);
+    expect((await POST(request)).status).toBe(400);
   });
 });

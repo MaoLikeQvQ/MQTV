@@ -3,6 +3,8 @@ node_modules/
 out/
 .env
 .env*.local
+.env.*
+!.env.example
 *.tsbuildinfo
 vitest-results.json
 *.log
@@ -12,3 +14,15 @@ vitest-results.json
 .zcode/
 .codebuddy/
 generated-images/
+# 服务端管理配置
+/data/
+/.runtime/
+
+# 私有数据源、订阅目录及同步报告（仅本地或服务器保存）
+/src/lib/source-presets.json
+/src/lib/tvbox-catalog.json
+/docs/source-sync-report.json
+
+# 本地验证产物可能包含数据源地址，不入库
+/output/
+/.playwright-cli/

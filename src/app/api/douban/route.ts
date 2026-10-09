@@ -6,7 +6,7 @@ export const runtime = 'nodejs';
 
 /** 豆瓣推荐：服务端直连 + 缓存，替代旧版浏览器经公共 CORS 代理的方案 */
 export async function GET(req: Request) {
-  const guarded = guardRequest(req);
+  const guarded = await guardRequest(req);
   if (guarded) return guarded;
 
   const url = new URL(req.url);

@@ -92,6 +92,21 @@ export function hostnameOf(url: string): string {
   }
 }
 
+/** 采集站简介常带 HTML，播放详情使用纯文本展示，保留段落换行。 */
+export function formatVideoDescription(value: string): string {
+  return value
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<br\s*\/?\s*>|<\/p\s*>/gi, '\n')
+    .replace(/<[^>]*>/g, '')
+    .replace(/&nbsp;|&#160;/gi, ' ')
+    .replace(/&quot;/gi, '"')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&amp;/gi, '&')
+    .split('\n').map((line) => line.replace(/[\s\u3000]+/g, ' ').trim()).filter(Boolean).join('\n');
+}
+
 /** 为分享链接等场景构造观看页 URL */
 export function buildWatchUrl(params: {
   sourceKey: string;
@@ -100,6 +115,7 @@ export function buildWatchUrl(params: {
   title?: string;
   episodeUrl?: string;
   sourceUrl?: string;
+  sourceType?: 't4' | 'drpy';
   detail?: string;
 }): string {
   const sp = new URLSearchParams();
@@ -109,6 +125,7 @@ export function buildWatchUrl(params: {
   if (params.title) sp.set('title', params.title);
   if (params.episodeUrl) sp.set('url', params.episodeUrl);
   if (params.sourceUrl) sp.set('sourceUrl', params.sourceUrl);
+  if (params.sourceType) sp.set('sourceType', params.sourceType);
   if (params.detail) sp.set('detail', params.detail);
   return `/watch?${sp.toString()}`;
 }

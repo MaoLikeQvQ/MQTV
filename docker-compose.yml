@@ -1,41 +1,47 @@
+# 生产部署：只拉取 MQTV 仓库构建的镜像，服务器无需源码。
+name: mqtv
 services:
   libretv:
-    build: .
-    # 版本管理：镜像 tag 与 package.json 的 version 保持一致
-    # - 使用者：不设置 LIBRETV_IMAGE 即拉取 ghcr.io/librespark/libretv:latest（首次部署用 docker compose pull）
-    # - 开发者：docker compose up -d --build 会在本地构建并打上同名 tag
-    # - 需要固定版本时设置 LIBRETV_IMAGE=ghcr.io/librespark/libretv:2.0.1
-    image: ${LIBRETV_IMAGE:-ghcr.io/librespark/libretv:latest}
-    container_name: libretv
+    image: ${LIBRETV_IMAGE:-ghcr.io/maolikeqvq/mqtv:latest}
     restart: unless-stopped
     ports:
-      - "8080:8080"
-    # 无状态服务：观看历史在浏览器 IndexedDB、设置在 localStorage，无需挂载卷
+      - "${HOST_BIND:-0.0.0.0}:${HOST_PORT:-18080}:8080"
+    env_file:
+      - .env
     environment:
-      # 必填：访问密码（在 .env 中设置，缺失时 compose 启动即报错提醒）
-      - PASSWORD=${PASSWORD:?请在 .env 中设置 PASSWORD}
-      # 可选：会话/代理签名密钥（多实例部署建议显式设置：openssl rand -hex 32）
-      # - PROXY_SECRET=your-secret
-      # 可选：Cookie Secure 策略覆盖（true=强制开启 / false=强制关闭；不设置时按请求协议自动推导，HTTP 部署无需配置）
-      # - COOKIE_SECURE=true
-      # 可选：预置采集站（JSON 数组），用户端自动出现且默认勾选
-      # - DEFAULT_SOURCES=[{"name":"示例源","url":"https://example.com/api.php/provide/vod"}]
-      # 可选：预置直播源（M3U 订阅，JSON 数组），epg 为可选节目单地址
-      # - DEFAULT_LIVE_SOURCES=[{"name":"示例直播源","url":"https://example.com/list.m3u","epg":"https://example.com/epg.xml.gz"}]
-      # 可选：预置数据源订阅（SourceList JSON 链接，一次下发点播源 + 直播源）
-      # - DEFAULT_SUBSCRIPTIONS=["https://example.com/sources.json"]
-      # 可选：首页推荐数据源默认值（douban / bangumi / hot-list），仅对未主动选择过的用户生效
-      # - DEFAULT_RECOMMEND_SOURCE=douban
-      # 可选：自建内网 IPTV 放行（对拉列表、测活、拉流三个阶段同时生效，默认关闭以维持 SSRF 防护）
-      # - LIVE_ALLOW_PRIVATE=1
-      # 可选：代理上游请求超时（毫秒）与重试次数
-      # - REQUEST_TIMEOUT=8000
-      # - MAX_RETRIES=1
-      # 可选：每个搜索源最多抓取的页数（1-50，默认 5），调大会显著增加上游请求量
-      # - SEARCH_MAX_PAGES=5
-      # 可选：单个搜索源的总死线（毫秒，3s-60s，默认 10000），到点中断该源并标记超时
-      # - SEARCH_SOURCE_TIMEOUT_MS=10000
-      # 可选：代理请求 UA（豆瓣防盗链等场景）
-      # - USER_AGENT=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36
-      # 可选：影视榜单推荐源（60s API）实例地址，官方公共实例有限流
-      # - 60S_API_BASE=https://60s.crystelf.top
+      NODE_ENV: production
+      PORT: "8080"
+      HOSTNAME: 0.0.0.0
+      DATA_DIR: /app/data
+      DRPY_BASE_URL: http://drpy:5757
+    volumes:
+      - libretv-data:/app/data
+    healthcheck:
+      test: ["CMD", "node", "--input-type=module", "-e", "const r=await fetch('http://127.0.0.1:8080/api/health');if(!r.ok)process.exit(1)"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+
+  drpy:
+    profiles: [drpy]
+    image: ${DRPY_IMAGE:-ghcr.io/maolikeqvq/mqtv-drpy:latest}
+    restart: unless-stopped
+    # 引擎只在 Compose 内部通信，不向宿主机发布端口。
+    expose:
+      - "5757"
+    environment:
+      DRPY_HOST: 0.0.0.0
+      DRPY_API_KEY: ${DRPY_API_KEY:-}
+      DRPY_MODULES: ${DRPY_MODULES:-cctv-public}
+    healthcheck:
+      test: ["CMD", "node", "--input-type=module", "-e", "const r=await fetch('http://127.0.0.1:5757/health',{headers:{'x-api-key':process.env.DRPY_API_KEY}});if(!r.ok)process.exit(1)"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+
+volumes:
+  libretv-data:
+    # 迁移已有部署时必须填写原来的实际卷名，避免创建空卷。
+    name: ${MQTV_DATA_VOLUME:-mqtv-data}

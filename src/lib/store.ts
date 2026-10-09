@@ -174,7 +174,16 @@ export interface SourceHealthEntry {
   timestamp: number;
 }
 
+export type ManagedLocalConfig = AppSettings & {
+  subscriptions: SourceSubscription[];
+  liveSubscriptions: LiveSubscription[];
+  liveSelectedUrls: string[];
+};
+
 interface AppState extends AppSettings {
+  managed: boolean;
+  /** 后台设置只覆盖运行时，保留旧设备配置以供后台手动迁移或导出。 */
+  managedLocalConfig?: ManagedLocalConfig;
   /** 部署者通过 DEFAULT_SOURCES 环境变量预置的源（服务端下发，不持久化） */
   envSources: SourceConfig[];
   /** 已向用户展示过并自动勾选过的预置源 key（持久化：用户取消勾选后不再反复勾上） */
@@ -275,6 +284,8 @@ function nextCustomKey(apiList: SourceConfig[]): string {
 export const useAppStore = create<AppState>()(
   persist(
     (set, get) => ({
+      managed: false,
+      managedLocalConfig: undefined,
       customAPIs: [],
       envSources: [],
       envKeysSeen: [],
@@ -790,6 +801,7 @@ export const useAppStore = create<AppState>()(
         imageProxyMode: s.imageProxyMode,
         imageProxyModeTouched: s.imageProxyModeTouched,
         customImageProxy: s.customImageProxy,
+        ...(s.managed ? s.managedLocalConfig : {}),
       }),
       // 同步 storage 会在模块加载时立即 rehydrate（早于 React hydration），
       // 一旦首屏渲染依赖持久化状态就会与 SSR 输出不一致。
@@ -827,7 +839,7 @@ export async function hydrateLiveProbeResults(): Promise<void> {
 export function resolveSource(
   store: Pick<AppState, 'customAPIs' | 'envSources'>,
   key: string,
-  fallback?: { url?: string; detail?: string; name?: string }
+  fallback?: { url?: string; detail?: string; name?: string; type?: SourceConfig['type'] }
 ): SourceConfig | undefined {
   const found = store.customAPIs.find((a) => a.key === key) ?? store.envSources.find((a) => a.key === key);
   if (found) return found;
@@ -837,6 +849,7 @@ export function resolveSource(
       name: fallback.name || '自定义源',
       url: fallback.url,
       detail: fallback.detail,
+      type: fallback.type,
     };
   }
   return undefined;

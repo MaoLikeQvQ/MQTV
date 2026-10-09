@@ -63,3 +63,10 @@ describe('buildImageCandidates', () => {
     expect(buildImageCandidates(undefined, 'direct', '')).toEqual([]);
   });
 });
+
+
+it('播放页简介移除采集站 HTML 标签并保留纯文本段落', async () => {
+  const { formatVideoDescription } = await import('./utils');
+  expect(formatVideoDescription('<p> 小月&nbsp; 与小梅 </p><p>遇见<br />龙猫 &amp; 朋友</p><script>alert(1)</script>'))
+    .toBe('小月 与小梅\n遇见\n龙猫 & 朋友');
+});

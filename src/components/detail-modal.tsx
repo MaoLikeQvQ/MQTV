@@ -53,27 +53,25 @@ export function DetailModal({ item, onClose }: { item: SearchResultItem | null; 
       setError('');
       return;
     }
-    const source = resolveSource(store, item.sourceKey, {
-      url: item.sourceUrl,
-      name: item.sourceName,
-    });
-    if (!source) {
-      setError('点播源配置不存在（可能已被删除），请在设置中重新添加');
-      return;
-    }
     setLoading(true);
+    setDetail(null);
     setError('');
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
-    api
-      .detail(item.vodId, source, controller.signal)
-      .then((d) => setDetail(d))
+    const source = resolveSource(store, item.sourceKey, { url: item.sourceUrl, name: item.sourceName, type: item.sourceType });
+    if (!source) {
+      setLoading(false);
+      setError('点播源配置不存在，请联系管理员');
+      return;
+    }
+    api.detail(item.vodId, source, controller.signal)
+      .then((detail) => { if (!controller.signal.aborted) setDetail(detail); })
       .catch((err) => {
-        if (err instanceof DOMException && err.name === 'AbortError') return;
+        if (controller.signal.aborted) return;
         setError(err instanceof Error ? err.message : '获取详情失败');
       })
-      .finally(() => setLoading(false));
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item]);
@@ -101,14 +99,18 @@ export function DetailModal({ item, onClose }: { item: SearchResultItem | null; 
         vodId: item.vodId,
         index,
         title: item.name,
-        sourceUrl: item.sourceUrl,
+        sourceUrl: item.sourceUrl, sourceType: item.sourceType,
       })
     );
   };
 
   const copyLinks = async () => {
     if (!detail) return;
-    const ok = await copyToClipboard(detail.episodes.join('\n'));
+    const links = item.sourceType ? detail.episodes.map((_, index) => new URL(buildWatchUrl({
+      sourceKey: item.sourceKey, vodId: item.vodId, index, title: item.name,
+      sourceUrl: item.sourceUrl, sourceType: item.sourceType,
+    }), window.location.origin).href) : detail.episodes;
+    const ok = await copyToClipboard(links.join('\n'));
     if (ok) toast('播放链接已复制', 'success');
     else toast('复制失败，请检查浏览器权限', 'error');
   };

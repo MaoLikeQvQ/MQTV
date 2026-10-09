@@ -540,7 +540,7 @@ function cacheSet(url: string, outcome: ProbeOutcome): void {
 }
 
 export async function POST(req: Request) {
-  const guarded = guardRequest(req);
+  const guarded = await guardRequest(req);
   if (guarded) return guarded;
 
   let body: { urls?: unknown };

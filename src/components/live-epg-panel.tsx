@@ -41,7 +41,7 @@ export function LiveEpgPanel({ epgUrl, tvgId }: { epgUrl?: string; tvgId?: strin
     return (
       <EmptyState
         variant="plain"
-        title="该频道未配置节目单数据（需来源订阅提供 EPG 地址且频道带 tvg-id）"
+        title="该频道暂无节目单"
         className="!py-4"
       />
     );
@@ -66,9 +66,9 @@ export function LiveEpgPanel({ epgUrl, tvgId }: { epgUrl?: string; tvgId?: strin
   const progress = current ? Math.min(100, Math.max(0, ((now - current.start) / (current.stop - current.start)) * 100)) : 0;
 
   return (
-    <div className="space-y-3">
+    <div className="live-epg space-y-3">
       {current ? (
-        <div className="bg-card border border-line rounded-lg p-3">
+        <div className="live-epg-current bg-card border border-line rounded-lg p-3">
           <div className="flex items-center gap-2 mb-1.5">
             <span className="text-[10px] font-semibold text-danger bg-danger/10 px-1.5 py-0.5 rounded-full">
               正在播出

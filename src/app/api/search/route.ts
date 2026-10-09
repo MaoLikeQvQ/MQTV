@@ -1,8 +1,12 @@
 import { NextResponse } from 'next/server';
 import { guardRequest } from '@/lib/api-guard';
-import { cmsRequestHeaders, filterAdultResults, filterRelevantResults, normalizeTitle, parseSearchList } from '@/lib/cms-parser';
+import { cmsRequestHeaders, filterAdultResults, filterRelevantResults, parseSearchList } from '@/lib/cms-parser';
 import { fetchUpstream, getCache, setCache } from '@/lib/fetch-utils';
-import { checkUpstreamAllowed } from '@/lib/ssrf';
+import { isCctvSource } from '@/lib/cctv-source';
+import { searchCctv } from '@/lib/cctv-spider';
+import { checkSourceAllowed, searchSpider } from '@/lib/spider-bridge';
+import { isSpiderSource } from '@/lib/spider-source';
+import { MAX_VOD_SOURCES } from '@/lib/source-list';
 import type { SearchResponse, SearchStreamEvent, SourceConfig, SourceSearchOutcome } from '@/lib/types';
 
 export const runtime = 'nodejs';
@@ -18,7 +22,7 @@ const SEARCH_CACHE_TTL = 60 * 1000;
 
 /** 缓存键：wd + 成人过滤 + 排序后的源地址集合（直接用完整字符串，避免哈希碰撞串缓存） */
 function searchCacheKey(wd: string, sources: SourceConfig[], filterAdult: boolean): string {
-  const urls = sources.map((s) => s.url.replace(/\/+$/, '')).sort().join('|');
+  const urls = sources.map((s) => `${s.type || 'cms'}:${s.url.replace(/\/+$/, '')}`).sort().join('|');
   return `search:${wd}\n${filterAdult ? 1 : 0}\n${urls}`;
 }
 
@@ -67,7 +71,7 @@ async function searchSource(source: SourceConfig, wd: string): Promise<SourceSea
     return finish({ sourceKey: source.key, ok: false, list: [], error: '无效的源地址' });
   }
   // 用户可控地址发起服务端请求，必须先过 SSRF 校验（协议白名单 + 内网/保留地址）
-  const verdict = await checkUpstreamAllowed(source.url);
+  const verdict = await checkSourceAllowed(source);
   if (!verdict.ok) {
     return finish({ sourceKey: source.key, ok: false, list: [], error: verdict.reason });
   }
@@ -92,6 +96,8 @@ async function searchSource(source: SourceConfig, wd: string): Promise<SourceSea
 
   const base = source.url.replace(/\/+$/, '');
   const fetchPage = async (page: number) => {
+    if (isSpiderSource(source)) return searchSpider(source, wd, page, controller.signal);
+    if (isCctvSource(source.url)) return searchCctv(source, wd, page, controller.signal);
     const api = `${base}?ac=videolist&wd=${encodeURIComponent(wd)}&pg=${page}`;
     const res = await fetchUpstream(api, {
       timeoutMs: 8000,
@@ -104,7 +110,9 @@ async function searchSource(source: SourceConfig, wd: string): Promise<SourceSea
 
   const run = async (): Promise<SourceSearchOutcome> => {
     const first = await fetchPage(1);
-    const list = parseSearchList(first, source);
+    const readList = (data: unknown) => isCctvSource(source.url) || isSpiderSource(source)
+      ? (data as { list: import('@/lib/types').SearchResultItem[] }).list : parseSearchList(data, source);
+    const list = readList(first);
     // 源站真实总页数与配置上限取较小者；pagecount 缺失或非法时视为 1 页
     const rawPageCount = parseInt(String((first as { pagecount?: unknown }).pagecount ?? '1'), 10);
     const pageCount = Math.min(Number.isFinite(rawPageCount) ? Math.max(1, rawPageCount) : 1, SEARCH_MAX_PAGES);
@@ -112,7 +120,7 @@ async function searchSource(source: SourceConfig, wd: string): Promise<SourceSea
       const extraPages = await Promise.all(
         Array.from({ length: pageCount - 1 }, (_, i) => i + 2).map(async (page) => {
           try {
-            return parseSearchList(await fetchPage(page), source);
+            return readList(await fetchPage(page));
           } catch {
             return [];
           }
@@ -150,29 +158,14 @@ async function searchSource(source: SourceConfig, wd: string): Promise<SourceSea
   }
 }
 
-/** 合并 + 去重 + 过滤 + 排序，stream 与非 stream 两种模式共用 */
+/** 按源完成顺序合并、过滤和去重，最终结果与流式展示保持同序。 */
 function aggregateOutcomes(outcomes: SourceSearchOutcome[], wd: string, filterAdult: boolean): SearchResponse {
   const seen = new Set<string>();
-  let list = outcomes.flatMap((o) => o.list).filter((item) => {
+  const list = outcomes.flatMap((o) => filterRelevantResults(filterAdultResults(o.list, filterAdult), wd)).filter((item) => {
     const key = `${item.sourceKey}_${item.vodId}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
-  });
-
-  list = filterAdultResults(list, filterAdult);
-  // 部分源站做分词/OR 模糊搜索（搜「摔跤吧！爸爸」返回一堆「爸爸XXX」），按关键词过滤
-  list = filterRelevantResults(list, wd);
-
-  // 精确命中（忽略标点差异）排在最前，其余按名称（与旧版一致），名称相同按源名
-  const exact = normalizeTitle(wd);
-  list.sort((a, b) => {
-    const aExact = normalizeTitle(a.name || '') === exact ? 0 : 1;
-    const bExact = normalizeTitle(b.name || '') === exact ? 0 : 1;
-    if (aExact !== bExact) return aExact - bExact;
-    const nameCompare = (a.name || '').localeCompare(b.name || '', 'zh-Hans-CN');
-    if (nameCompare !== 0) return nameCompare;
-    return (a.sourceName || '').localeCompare(b.sourceName || '', 'zh-Hans-CN');
   });
 
   const failures = outcomes
@@ -189,7 +182,7 @@ function aggregateOutcomes(outcomes: SourceSearchOutcome[], wd: string, filterAd
  *   最终推送聚合后的 done 事件并写入短缓存。
  */
 export async function POST(req: Request) {
-  const guarded = guardRequest(req);
+  const guarded = await guardRequest(req);
   if (guarded) return guarded;
 
   let body: SearchBody;
@@ -206,7 +199,7 @@ export async function POST(req: Request) {
   if (!Array.isArray(body.sources) || body.sources.length === 0) {
     return NextResponse.json({ error: '请至少选择一个点播源' }, { status: 400 });
   }
-  const sources = body.sources.slice(0, 50);
+  const sources = body.sources.slice(0, MAX_VOD_SOURCES);
   const filterAdult = body.filterAdult !== false;
 
   const cacheKey = searchCacheKey(wd, sources, filterAdult);
@@ -224,7 +217,10 @@ export async function POST(req: Request) {
 
   const isStream = new URL(req.url).searchParams.get('stream') === '1';
   if (!isStream) {
-    const outcomes = await Promise.all(sources.map((source) => searchSource(source, wd)));
+    const outcomes: SourceSearchOutcome[] = [];
+    await Promise.all(sources.map(async (source) => {
+      outcomes.push(await searchSource(source, wd));
+    }));
     const payload = aggregateOutcomes(outcomes, wd, filterAdult);
     setCache(cacheKey, payload, SEARCH_CACHE_TTL);
     return NextResponse.json(payload);
@@ -243,12 +239,13 @@ export async function POST(req: Request) {
         }
       };
 
-      // 逐源结算即推送；outcomes 按下标回填保证聚合顺序稳定
-      const outcomes: SourceSearchOutcome[] = new Array(sources.length);
+      // 按完成顺序追加；done 和短缓存沿用相同顺序，不在结束时重新排位。
+      const outcomes: SourceSearchOutcome[] = [];
       await Promise.all(
-        sources.map(async (source, i) => {
+        sources.map(async (source) => {
           const outcome = await searchSource(source, wd);
-          outcomes[i] = outcome;
+          outcome.list = aggregateOutcomes([outcome], wd, filterAdult).list;
+          outcomes.push(outcome);
           send({ type: 'source', ...outcome });
         })
       );

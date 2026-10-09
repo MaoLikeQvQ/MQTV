@@ -11,7 +11,7 @@ tsconfig.tsbuildinfo
 
 # 本地环境与日志
 .env
-.env*.local
+.env*
 *.log
 
 # 文档与编排文件（不参与镜像构建）
@@ -19,4 +19,18 @@ Dockerfile
 docker-compose.yml
 docs
 README.md
-LICENSE
+.runtime
+
+# 私有目录、数据源及本地验证产物不进入构建上下文
+/data
+/src/lib/source-presets.json
+/src/lib/tvbox-catalog.json
+/output
+/.playwright-cli
+/src/lib/testing
+**/*.test.ts
+/scripts/deploy*.sh
+/scripts/deploy*.mjs
+/docker-compose*.yml
+
+/scripts/check-release-files.mjs

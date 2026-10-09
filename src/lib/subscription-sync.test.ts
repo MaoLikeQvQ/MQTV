@@ -14,6 +14,7 @@ vi.mock('./client-api', () => ({
 }));
 
 import { api } from './client-api';
+import { DEFAULT_SITE } from './site-config-types';
 import { applyEnvPresets } from './subscription-sync';
 import { useAppStore } from './store';
 import type { AuthStatusResponse, SourceListPayload } from './types';
@@ -51,6 +52,7 @@ const fetchSourceList = vi.mocked(api.fetchSourceList);
 beforeEach(() => {
   vi.clearAllMocks();
   useAppStore.setState({
+    managed: false, managedLocalConfig: undefined,
     customAPIs: [],
     selectedKeys: [],
     envSources: [],
@@ -221,5 +223,35 @@ describe('applyEnvPresets · DEFAULT_IMAGE_MODE', () => {
     await applyEnvPresets(status({ defaultImageMode: 'proxy' }));
     expect(useAppStore.getState().imageProxyMode).toBe('proxy');
     expect(useAppStore.getState().imageProxyModeTouched).toBe(false);
+  });
+});
+
+
+describe('后台权威设置', () => {
+  it('覆盖已保存的偏好与源选择，保留旧设备配置且不再由浏览器同步订阅', async () => {
+    const oldSource = { key: 'local', name: '旧设备源', url: 'https://old.example.com/api' };
+    useAppStore.setState({ customAPIs: [oldSource], selectedKeys: ['local'],
+      adFilter: false, doubanEnabled: false, recommendSource: 'douban', recommendSourceTouched: true,
+      autoplayNext: false, imageProxyMode: 'custom', customImageProxy: 'https://old.example.com/{url}',
+    });
+    await applyEnvPresets(status({ site: { ...DEFAULT_SITE, imageMode: 'proxy' },
+      defaultSources: [{ key: 'server', name: '服务器源', url: 'https://server.example.com/api' }],
+      defaultSubscriptions: [{ url: SUB_URL }],
+    }));
+    const state = useAppStore.getState();
+    expect(state).toMatchObject({ managed: true, customAPIs: [], selectedKeys: ['server'],
+      adFilter: true, doubanEnabled: true, recommendSource: 'hot-list', autoplayNext: true,
+      imageProxyMode: 'proxy', customImageProxy: '',
+    });
+    expect(state.managedLocalConfig).toMatchObject({ customAPIs: [oldSource], selectedKeys: ['local'],
+      adFilter: false, recommendSource: 'douban', imageProxyMode: 'custom' });
+    expect(fetchSourceList).not.toHaveBeenCalled();
+    const partialize = useAppStore.persist.getOptions().partialize!;
+    expect(partialize(state)).toMatchObject({ customAPIs: [oldSource], selectedKeys: ['local'], adFilter: false });
+    await applyEnvPresets(status({ site: { ...DEFAULT_SITE, yellowFilter: true },
+      defaultSources: [{ key: 'adult', name: '成人', url: 'https://adult.example.com/api', isAdult: true }],
+    }));
+    expect(useAppStore.getState().selectedKeys).toEqual([]);
+    expect(useAppStore.getState().managedLocalConfig?.customAPIs).toEqual([oldSource]);
   });
 });

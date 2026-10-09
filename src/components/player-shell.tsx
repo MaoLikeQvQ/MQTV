@@ -62,7 +62,7 @@ export function PlayerShell({
   const hlsRef = useRef<Hls | null>(null);
   const [error, setError] = useState('');
   const [hint, setHint] = useState('');
-  // 起播前的品牌占位图（沿用旧版 nomedia 素材），实际开始播放后隐藏
+  // 起播前展示 MQTV 品牌占位，实际开始播放后隐藏。
   const [showPoster, setShowPoster] = useState(true);
   const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -291,7 +291,7 @@ export function PlayerShell({
       playsInline: true,
       airplay: true,
       hotkey: false,
-      theme: '#2563eb',
+      theme: 'rgb(var(--c-accent))',
       lang: navigator.language.toLowerCase().startsWith('zh') ? 'zh-cn' : 'en',
       moreVideoAttr: { crossOrigin: 'anonymous', playsInline: true },
       customType: {
@@ -492,18 +492,17 @@ export function PlayerShell({
   }, [adFilter]);
 
   return (
-    <div className="relative w-full h-full">
+    <div className="player-shell relative w-full h-full">
       <div ref={containerRef} className="w-full h-full" style={{ WebkitTouchCallout: 'none' }} />
       {showPoster && !error && (
-        <div
-          className="absolute inset-0 bg-black pointer-events-none"
-          style={{
-            backgroundImage: 'url(/player-poster.png)',
-            backgroundSize: 'contain',
-            backgroundPosition: 'center',
-            backgroundRepeat: 'no-repeat',
-          }}
-        />
+        <div className="player-brand-poster" role="status" aria-label="MQTV 播放器正在准备播放">
+          <div className="player-brand-logo">
+            <span aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5z" /></svg></span>
+            <strong>MQTV</strong>
+          </div>
+          <p>发现你的下一部好片</p>
+          <span className="cinema-skeleton h-0.5 w-16" aria-hidden="true" />
+        </div>
       )}
       {error && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/80">

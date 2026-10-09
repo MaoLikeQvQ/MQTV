@@ -1,4 +1,4 @@
-import type { SearchResultItem, VideoDetail } from './types';
+import type { SearchResultItem, VideoDetail, SourceType } from './types';
 
 /**
  * Apple CMS（苹果CMS）资源站响应解析
@@ -20,7 +20,7 @@ export function cmsRequestHeaders(): Record<string, string> {
 /** 搜索响应 → 统一结果列表 */
 export function parseSearchList(
   data: unknown,
-  source: { key: string; name: string; url: string; isAdult?: boolean }
+  source: { key: string; name: string; url: string; isAdult?: boolean; type?: SourceType }
 ): SearchResultItem[] {
   if (!data || typeof data !== 'object') throw new Error('API返回的数据格式无效');
   const list = (data as { list?: unknown }).list;
@@ -41,6 +41,7 @@ export function parseSearchList(
       area: typeof vod.vod_area === 'string' ? vod.vod_area : undefined,
       remarks: typeof vod.vod_remarks === 'string' ? vod.vod_remarks : undefined,
       sourceUrl: source.url,
+      sourceType: source.type,
       isAdult: source.isAdult,
     };
   });

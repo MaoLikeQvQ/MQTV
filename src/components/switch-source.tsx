@@ -157,7 +157,7 @@ export function SwitchSourceModal({
         vodId: c.result.vodId,
         index: targetIndex,
         title: c.result.name || currentTitle,
-        sourceUrl: c.source.url,
+        sourceUrl: c.source.url, sourceType: c.source.type,
         detail: c.source.detail,
       })
     );

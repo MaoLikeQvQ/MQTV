@@ -4,18 +4,18 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { ThemeToggle } from './theme';
-import { SourceManagerDrawer } from './source-manager';
 import { HistoryPanel } from './history-panel';
 import { requestShowDownloadManager } from './download-manager';
 import { Icon } from './icon';
 import { SearchHistoryDropdown, useSearchHistory } from './search-history';
 import { cn } from '@/lib/utils';
+import { useAuth } from './auth';
 
-/** 顶部导航：Logo、搜索框（首页外）、历史、设置 */
+/** 顶部导航：品牌、搜索框（首页外）与观看工具；网站设置统一在后台管理。 */
 export function Header({ showSearch = false }: { showSearch?: boolean }) {
+  const { site } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [query, setQuery] = useState('');
   // 与首页搜索框共用同一套「最近搜索」下拉逻辑
@@ -37,11 +37,13 @@ export function Header({ showSearch = false }: { showSearch?: boolean }) {
 
   return (
     <>
-      <header className="sticky top-0 z-40 bg-surface/90 backdrop-blur border-b border-line">
-        <div className="max-w-6xl mx-auto px-4 h-14 flex items-center gap-3">
-          <Link href="/" aria-label="LibreTV 首页" className="flex items-center shrink-0">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/icons/icon-512.png" alt="LibreTV" className="w-7 h-7 rounded-lg" />
+      <header className="sticky top-0 z-40 bg-surface/95 backdrop-blur border-b border-line">
+        <div className="max-w-6xl mx-auto px-4 h-16 flex items-center gap-3 sm:gap-5">
+          <Link href="/" aria-label={`${site.name} 首页`} className="flex items-center gap-2.5 shrink-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40">
+            <span className="w-8 h-8 rounded-lg bg-accent text-on-accent flex items-center justify-center" aria-hidden="true">
+              <svg viewBox="0 0 24 24" className="w-5 h-5" fill="currentColor"><path d="M9 5.5a1 1 0 0 1 1.5-.86l10 6a1 1 0 0 1 0 1.72l-10 6A1 1 0 0 1 9 17.5z" transform="translate(-2 0)" /></svg>
+            </span>
+            <span className={cn('font-semibold tracking-tight text-content max-w-36 truncate', showSearch ? 'hidden lg:block' : 'hidden sm:block')}>{site.name}</span>
           </Link>
 
           {showSearch && (
@@ -110,14 +112,10 @@ export function Header({ showSearch = false }: { showSearch?: boolean }) {
             <IconButton label="下载管理" onClick={requestShowDownloadManager}>
               <Icon name="download" />
             </IconButton>
-            <IconButton label="设置" onClick={() => setSettingsOpen(true)}>
-              <Icon name="gear" />
-            </IconButton>
           </nav>
         </div>
       </header>
 
-      <SourceManagerDrawer open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <HistoryPanel open={historyOpen} onClose={() => setHistoryOpen(false)} />
     </>
   );
@@ -128,7 +126,7 @@ function HeaderLink({ href, active, children }: { href: string; active: boolean;
     <Link
       href={href}
       className={cn(
-        'px-2.5 py-1.5 rounded-md text-sm transition-colors',
+        'px-2.5 py-2 rounded-lg text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40',
         active ? 'text-content bg-hover' : 'text-muted hover:text-content'
       )}
     >
@@ -140,7 +138,7 @@ function HeaderLink({ href, active, children }: { href: string; active: boolean;
 function IconButton({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) {
   return (
     <button
-      className="p-2 rounded-md text-muted hover:text-content hover:bg-hover transition-colors"
+      className="p-2 rounded-lg text-muted hover:text-content hover:bg-hover transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
       title={label}
       aria-label={label}
       onClick={onClick}

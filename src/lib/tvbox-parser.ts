@@ -12,9 +12,10 @@ import {
  * TVBOX 配置 JSON 的解析层：把 `sites` / `lives` 归一化为本站的 SourceListPayload，
  * 使同一份订阅入口同时兼容 LibreTV-SourceList 与 TVBOX 两种格式。
  *
- * 仅导入「直连类」条目（与本站现有能力对齐）：
+ * 导入已支持的 HTTP 接口：
  * - 点播：type=1 的 JSON 接口（即 Apple CMS 采集站）；部分共享配置省略 type 或写成 0，
  *   但地址命中 Apple CMS 特征时一并宽容导入；
+ * - 点播：type=4 的 T4 HTTP Spider 接口，通过搜索、详情、播放解析三个动作调用；
  * - 直播：type=0（或省略）的 M3U 播放列表，可带 EPG 节目单地址。
  *
  * Spider 类（csp_xxx / jar / js / py）需要 TVBOX 引擎才能在 Node 侧运行，XML 接口、
@@ -284,7 +285,7 @@ export function describeParseStats(
   return parts.join('，');
 }
 
-/** 收集点播源：只接受 Apple CMS 直连接口 */
+/** 收集点播源：Apple CMS 与 T4 HTTP 接口 */
 function collectVodSources(rawSites: unknown[], skipped: SkipCounter) {
   const seen = new Set<string>();
   const sources: SourceListPayload['sources'] = [];
@@ -301,7 +302,7 @@ function collectVodSources(rawSites: unknown[], skipped: SkipCounter) {
       markSkipped(skipped, 'invalidUrl', name);
       continue;
     }
-    // Spider 类与本地资源需要 TVBOX 引擎，Node 侧无法运行
+    // 未适配的JAR/JS/Python规则仍不能通过HTTP桥接直接执行
     if (type === SITE_TYPE_SPIDER || SPIDER_PATTERN.test(api)) {
       markSkipped(skipped, 'spider', name);
       continue;
@@ -318,7 +319,7 @@ function collectVodSources(rawSites: unknown[], skipped: SkipCounter) {
 
     // 可导入判定：显式 JSON 接口，或类型缺失/写成 XML、外链但地址命中 Apple CMS 特征
     const importable =
-      type === SITE_TYPE_JSON ||
+      type === SITE_TYPE_JSON || type === SITE_TYPE_API ||
       ((type === undefined || type === SITE_TYPE_XML || type === SITE_TYPE_API) && CMS_API_PATTERN.test(api));
     if (!importable) {
       markSkipped(skipped, type === SITE_TYPE_API ? 'spider' : 'xml', name);
@@ -336,7 +337,7 @@ function collectVodSources(rawSites: unknown[], skipped: SkipCounter) {
       continue;
     }
     seen.add(url);
-    sources.push({ name: name || hostnameOf(url), url });
+    sources.push({ name: name || hostnameOf(url), url, ...(type === SITE_TYPE_API && !CMS_API_PATTERN.test(api) ? { type: 't4' as const } : {}) });
   }
 
   return { sources, truncated };

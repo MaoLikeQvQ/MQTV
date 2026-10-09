@@ -56,6 +56,7 @@ interface ChannelListProps {
   onSelect: (channel: LiveChannelItem) => void;
   /** 筛选+排序结果变化时上报（页面级键盘换台沿此列表顺序切换） */
   onFilteredChange?: (list: LiveChannelItem[]) => void;
+  emptyMessage?: string;
 }
 
 type View = 'all' | 'fav' | 'recent';
@@ -69,7 +70,7 @@ function useDebouncedValue<T>(value: T, delay: number): T {
   return debounced;
 }
 
-export function LiveChannelList({ channels, groups, currentUrl, onSelect, onFilteredChange }: ChannelListProps) {
+export function LiveChannelList({ channels, groups, currentUrl, onSelect, onFilteredChange, emptyMessage = '暂无频道，可在管理后台检查直播源' }: ChannelListProps) {
   // 精确订阅：避免任何 store 字段变化（尤其测活节流写回）引发本组件重渲染
   const liveFavorites = useAppStore((s) => s.liveFavorites);
   const liveRecent = useAppStore((s) => s.liveRecent);
@@ -214,7 +215,7 @@ export function LiveChannelList({ channels, groups, currentUrl, onSelect, onFilt
   }, []);
 
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div className="live-channel-browser flex flex-col h-full min-h-0">
       {/* 视图 tab */}
       <div className="flex items-center gap-1 px-3 pt-2.5 pb-2 border-b border-line shrink-0">
         {(
@@ -230,6 +231,7 @@ export function LiveChannelList({ channels, groups, currentUrl, onSelect, onFilt
               'px-2.5 py-1 rounded-md text-xs transition-colors',
               view === v ? 'bg-accent/10 text-accent font-medium' : 'text-muted hover:text-content hover:bg-hover'
             )}
+            aria-pressed={view === v}
             onClick={() => setView(v)}
           >
             {label}
@@ -241,7 +243,8 @@ export function LiveChannelList({ channels, groups, currentUrl, onSelect, onFilt
       <div className="px-3 py-2 shrink-0 flex items-center gap-1.5">
         <input
           className="input w-full !py-1.5 text-xs"
-          placeholder="搜索频道 / tvg-id / 分组..."
+          aria-label="搜索频道"
+          placeholder="搜索频道或分组"
           value={keyword}
           maxLength={60}
           onChange={(e) => setKeyword(e.target.value)}
@@ -371,7 +374,7 @@ export function LiveChannelList({ channels, groups, currentUrl, onSelect, onFilt
                 : view === 'recent'
                   ? '暂无观看记录'
                   : channels.length === 0
-                    ? '暂无频道，请先在设置中添加直播源'
+                    ? emptyMessage
                     : aliveFilter !== 'off' && probeResults.size > 0
                       ? '没有匹配该可用性的频道，可放宽或清除筛选'
                       : '没有匹配的频道'
@@ -492,7 +495,7 @@ const ChannelRow = memo(function ChannelRow({
           键盘操作由外层列表容器的 ↑↓ 导航提供 */}
       <div
         className={cn(
-          'group flex items-center gap-2.5 px-2 py-2 rounded-md cursor-pointer transition-colors relative',
+          'live-channel-row group flex items-center gap-2.5 px-2 py-2 rounded-md cursor-pointer transition-colors relative',
           active ? 'bg-accent/10' : 'hover:bg-hover',
           cursor && 'ring-1 ring-accent/70'
         )}

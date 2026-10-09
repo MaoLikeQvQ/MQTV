@@ -48,7 +48,7 @@ function toM3uText(playlist: LivePlaylistResponse): string {
  * - format=m3u 返回解析后的标准 M3U 文本（订阅导出）。
  */
 export async function GET(req: Request) {
-  const guarded = guardRequest(req);
+  const guarded = await guardRequest(req);
   if (guarded) return guarded;
 
   const sp = new URL(req.url).searchParams;

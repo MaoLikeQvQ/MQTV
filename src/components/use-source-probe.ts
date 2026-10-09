@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/client-api';
 import { useAppStore } from '@/lib/store';
-import type { SourceSearchOutcome } from '@/lib/types';
+import type { SourceSearchOutcome, SourceConfig } from '@/lib/types';
 
 /**
  * 点播源批量探活 hook：
@@ -43,7 +43,7 @@ export function useSourceProbe() {
     setProgress(null);
   }, []);
 
-  const probe = useCallback(async (sources: { key: string; url: string }[]) => {
+  const probe = useCallback(async (sources: { key: string; url: string; type?: SourceConfig['type'] }[]) => {
     if (sources.length === 0) return;
     const runId = ++runIdRef.current;
     const total = sources.length;
@@ -71,7 +71,7 @@ export function useSourceProbe() {
         const source = sources[index];
         let outcome: SourceSearchOutcome;
         try {
-          const r = await api.testSource(source.url);
+          const r = await api.testSource(source.url, source.type);
           outcome = { sourceKey: source.key, ok: r.ok, ms: r.ms, error: r.error, list: [] };
         } catch (err) {
           outcome = {

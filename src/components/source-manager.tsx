@@ -5,6 +5,7 @@ import { Drawer } from './drawer';
 import { ConfirmDialog } from './confirm-dialog';
 import { Icon, type IconName } from './icon';
 import { LiveSourceManager } from './live-source-manager';
+import { TvboxCatalog } from './tvbox-catalog';
 import {
   HealthBadge,
   SearchInput,
@@ -39,7 +40,7 @@ import { describeParseStats } from '@/lib/tvbox-parser';
  */
 
 type PrimaryTab = 'sources' | 'prefs' | 'data';
-type SecondaryTab = 'vod' | 'live' | 'subs' | 'playback' | 'image' | 'home' | 'io';
+type SecondaryTab = 'vod' | 'live' | 'subs' | 'catalog' | 'playback' | 'image' | 'home' | 'io';
 
 const PRIMARY_TABS: { id: PrimaryTab; label: string; icon: IconName }[] = [
   { id: 'sources', label: '源管理', icon: 'link' },
@@ -52,6 +53,7 @@ const SECONDARY_TABS: Record<PrimaryTab, { id: SecondaryTab; label: string }[]> 
     { id: 'vod', label: '点播源' },
     { id: 'live', label: '直播源' },
     { id: 'subs', label: '数据源订阅' },
+    { id: 'catalog', label: '资源目录' },
   ],
   prefs: [
     { id: 'playback', label: '播放与过滤' },
@@ -136,6 +138,7 @@ export function SourceManagerDrawer({ open, onClose }: { open: boolean; onClose:
       {current === 'image' && <ImagePanel />}
       {current === 'home' && <HomePanel />}
       {current === 'subs' && <SourceSubscriptions />}
+      {current === 'catalog' && <TvboxCatalog />}
       {current === 'io' && <ConfigIoPanel />}
     </Drawer>
   );
@@ -265,7 +268,7 @@ function VodSourcesPanel() {
       cancel();
       return;
     }
-    const result = await probe(filtered.map((s) => ({ key: s.key, url: s.url })));
+    const result = await probe(filtered.map((s) => ({ key: s.key, url: s.url, type: s.type })));
     if (!result) return; // 被取消则无汇总
     toast(`测活完成：${result.ok}/${result.total} 个可用`, result.ok === result.total ? 'success' : 'info');
   };
@@ -389,7 +392,7 @@ function VodSourcesPanel() {
                   testState={tests[source.key]}
                   onTest={() =>
                     runTest(source.key, async () => {
-                      const r = await api.testSource(source.url);
+                      const r = await api.testSource(source.url, source.type);
                       // 手动测试也写入健康度，与搜索 / 批量测活共用同一份模型（不再存在两套健康度）
                       useAppStore.getState().recordSourceHealth([
                         { sourceKey: source.key, ok: r.ok, ms: r.ms, error: r.error, list: [] },
@@ -793,7 +796,7 @@ function SourceSubscriptions() {
         seen.add(key);
         return true;
       })
-      .map(({ name, url }) => ({ name, url }));
+      .map(({ name, url, type }) => ({ name, url, type }));
 
     const liveSeen = new Set<string>();
     const liveSources = allLiveSources(store)
@@ -839,7 +842,7 @@ function SourceSubscriptions() {
         seen.add(u);
         return true;
       })
-      .map(({ name, url, detail, isAdult }) => ({ name, url, detail, isAdult }));
+      .map(({ name, url, detail, isAdult, type }) => ({ name, url, detail, isAdult, type }));
 
     // 直播源：预置 + 手动 + 订阅导入，按 URL 去重
     const liveSeen = new Set<string>();

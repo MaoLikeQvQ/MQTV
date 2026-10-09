@@ -28,6 +28,7 @@ interface RawItem {
   detail?: unknown;
   isAdult?: unknown;
   epg?: unknown;
+  type?: unknown;
 }
 
 /**
@@ -91,6 +92,7 @@ export function parseSourceListPayload(json: unknown): SourceListPayload {
       url,
       detail: optionalString(s?.detail),
       isAdult: s?.isAdult === true,
+      ...(s?.type === 't4' || s?.type === 'drpy' ? { type: s.type } : {}),
     });
   }
 

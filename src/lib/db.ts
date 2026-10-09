@@ -18,6 +18,7 @@ export interface HistoryEntry {
   id: string;
   sourceKey: string;
   sourceUrl?: string;
+  sourceType?: SourceConfig['type'];
   vodId: string;
   title: string;
   pic?: string;

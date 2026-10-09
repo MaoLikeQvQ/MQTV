@@ -1,4 +1,6 @@
-// 采集站（Apple CMS 资源站）描述
+export type SourceType = 't4' | 'drpy';
+
+// 点播源描述：缺省为 Apple CMS，t4 为公网 Spider HTTP 接口，drpy 为部署者托管规则
 export interface SourceConfig {
   /** 唯一标识，如 "custom_0"；内置源直接用短名 */
   key: string;
@@ -7,6 +9,7 @@ export interface SourceConfig {
   url: string;
   /** 可选：详情页根地址（部分源需要爬详情页提取 m3u8） */
   detail?: string;
+  type?: SourceType;
   isAdult?: boolean;
 }
 
@@ -22,6 +25,7 @@ export interface SearchResultItem {
   remarks?: string;
   /** 自定义源的 API 地址，详情请求需要 */
   sourceUrl?: string;
+  sourceType?: SourceType;
   isAdult?: boolean;
 }
 
@@ -38,6 +42,7 @@ export interface VideoInfo {
   sourceKey: string;
   sourceName: string;
   sourceUrl?: string;
+  sourceType?: SourceType;
 }
 
 export interface VideoDetail {
@@ -91,6 +96,8 @@ export interface BangumiCalendarResponse {
 }
 
 export interface AuthStatusResponse {
+  authDisabled?: boolean;
+  site?: import('./site-config-types').SiteSettings;
   /** 服务器是否配置了 PASSWORD */
   passwordRequired: boolean;
   /** 当前会话是否已验证 */
@@ -105,7 +112,7 @@ export interface AuthStatusResponse {
   /** 部署者通过 DEFAULT_RECOMMEND_SOURCE 环境变量指定的首页推荐数据源默认值（未配置时为 null） */
   defaultRecommendSource: 'douban' | 'bangumi' | 'hot-list' | null;
   /** 部署者通过 DEFAULT_IMAGE_MODE 环境变量指定的封面图加载方式默认值（未配置时为 null） */
-  defaultImageMode: 'direct' | 'proxy' | null;
+  defaultImageMode: 'direct' | 'proxy' | 'custom' | null;
 }
 
 // —— 直播 / IPTV ——

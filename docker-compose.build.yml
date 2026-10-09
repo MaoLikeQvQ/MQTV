@@ -1,0 +1,12 @@
+# 本地源码构建时叠加此文件；生产服务器无需上传。
+services:
+  libretv:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mqtv-local:dev
+  drpy:
+    build:
+      context: .
+      dockerfile: Dockerfile.drpy
+    image: mqtv-drpy-local:dev

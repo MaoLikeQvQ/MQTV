@@ -72,7 +72,7 @@ describe('parseTvboxPayload', () => {
     expect(result.stats?.skipped).toBe(0);
   });
 
-  it('Spider、本地资源、XML 与非 CMS 外链站点跳过并分类计数', () => {
+  it('跳过未支持的插件与XML，导入T4并保留协议', () => {
     const result = parseTvboxPayload({
       sites: [
         { name: '正版源', type: 1, api: 'https://ok.example.com/api.php/provide/vod' },
@@ -84,9 +84,10 @@ describe('parseTvboxPayload', () => {
       ],
     });
 
-    expect(result.sources.map((s) => s.name)).toEqual(['正版源']);
-    expect(result.stats?.skipped).toBe(5);
-    expect(result.stats?.skippedByReason).toEqual({ spider: 4, xml: 1 });
+    expect(result.sources.map((s) => s.name)).toEqual(['正版源', '外链站']);
+    expect(result.sources[1].type).toBe('t4');
+    expect(result.stats?.skipped).toBe(4);
+    expect(result.stats?.skippedByReason).toEqual({ spider: 3, xml: 1 });
     expect(result.stats?.skippedSamples).toEqual(['蜘蛛A', '蜘蛛B', '本地JS']);
   });
 
