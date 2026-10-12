@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import type { SiteConfig } from '@/lib/site-config-types';
 import type { LivePlaylistResponse } from '@/lib/types';
 import type { SourceCatalog } from '@/lib/source-catalog-types';
+import type { SourceCapabilities } from '@/lib/source-capability';
 import { copyToClipboard } from '@/lib/clipboard';
 import { Icon } from './icon';
 import { Switch } from './settings-shared';
@@ -81,8 +82,12 @@ export function AdminSourceEditor({ kind, config, onChange, request, onSync, rep
     setResults((current) => ({ ...current, [item.url]: '正在检测…' }));
     try {
       if (kind === 'sources') {
-        const result = await request<{ ok: boolean; ms?: number; count?: number; error?: string }>('/api/source/test', { method: 'POST', body: JSON.stringify({ url: item.url, type: item.type }) });
-        setResults((current) => ({ ...current, [item.url]: result.ok ? `可达 · ${result.ms} ms · ${result.count || 0} 条搜索结果` : `检测失败：${result.error || '源无响应'}` }));
+        const result = await request<{ ok: boolean; ms?: number; count?: number; error?: string; capabilities?: SourceCapabilities }>('/api/source/test', { method: 'POST', body: JSON.stringify({ url: item.url, type: item.type }) });
+        const capabilities = result.capabilities;
+        const label = capabilities
+          ? `列表${capabilities.list === null ? '未检测' : capabilities.list ? '可用' : '不可用'} · ${capabilities.search === 'supported' ? '搜索已验证' : capabilities.search === 'unsupported' ? '不支持关键词搜索' : '搜索未确认'} · ${result.ms} ms${result.error ? ` · ${result.error}` : ''}`
+          : `检测失败：${result.error || '源无响应'}`;
+        setResults((current) => ({ ...current, [item.url]: label }));
       } else {
         const result = await request<LivePlaylistResponse>(`/api/admin/live-test?force=1&url=${encodeURIComponent(item.url)}`);
         setResults((current) => ({ ...current, [item.url]: `已解析 ${result.channels.length} 个频道 · ${result.groups.length} 个分组` }));

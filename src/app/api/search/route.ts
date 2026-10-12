@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { guardRequest } from '@/lib/api-guard';
-import { cmsRequestHeaders, filterAdultResults, filterRelevantResults, parseSearchList } from '@/lib/cms-parser';
+import { cmsListUrl, cmsRequestHeaders, filterAdultResults, filterRelevantResults, parseSearchList } from '@/lib/cms-parser';
 import { fetchUpstream, getCache, setCache } from '@/lib/fetch-utils';
 import { isCctvSource } from '@/lib/cctv-source';
 import { searchCctv } from '@/lib/cctv-spider';
@@ -23,7 +23,7 @@ const SEARCH_CACHE_TTL = 60 * 1000;
 /** 缓存键：wd + 成人过滤 + 排序后的源地址集合（直接用完整字符串，避免哈希碰撞串缓存） */
 function searchCacheKey(wd: string, sources: SourceConfig[], filterAdult: boolean): string {
   const urls = sources.map((s) => `${s.type || 'cms'}:${s.url.replace(/\/+$/, '')}`).sort().join('|');
-  return `search:${wd}\n${filterAdult ? 1 : 0}\n${urls}`;
+  return `search:keyword-only:${wd}\n${filterAdult ? 1 : 0}\n${urls}`;
 }
 
 /**
@@ -98,7 +98,7 @@ async function searchSource(source: SourceConfig, wd: string): Promise<SourceSea
   const fetchPage = async (page: number) => {
     if (isSpiderSource(source)) return searchSpider(source, wd, page, controller.signal);
     if (isCctvSource(source.url)) return searchCctv(source, wd, page, controller.signal);
-    const api = `${base}?ac=videolist&wd=${encodeURIComponent(wd)}&pg=${page}`;
+    const api = cmsListUrl(base, wd, page);
     const res = await fetchUpstream(api, {
       timeoutMs: 8000,
       headers: cmsRequestHeaders(),
@@ -113,6 +113,10 @@ async function searchSource(source: SourceConfig, wd: string): Promise<SourceSea
     const readList = (data: unknown) => isCctvSource(source.url) || isSpiderSource(source)
       ? (data as { list: import('@/lib/types').SearchResultItem[] }).list : parseSearchList(data, source);
     const list = readList(first);
+    // 首批非空却没有标题命中：本次响应没有证明搜索能力，不继续翻默认列表。
+    if (list.length > 0 && filterRelevantResults(list, wd).length === 0) {
+      return { sourceKey: source.key, ok: false, list: [], error: '搜索响应仅含无关列表，已排除该源结果' };
+    }
     // 源站真实总页数与配置上限取较小者；pagecount 缺失或非法时视为 1 页
     const rawPageCount = parseInt(String((first as { pagecount?: unknown }).pagecount ?? '1'), 10);
     const pageCount = Math.min(Number.isFinite(rawPageCount) ? Math.max(1, rawPageCount) : 1, SEARCH_MAX_PAGES);

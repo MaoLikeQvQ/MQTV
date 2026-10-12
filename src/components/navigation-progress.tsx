@@ -1,8 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { useIsFetching } from '@tanstack/react-query';
-import { usePathname, useSearchParams } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import { useGSAP } from '@gsap/react';
 import gsap from 'gsap';
 
@@ -10,26 +9,21 @@ gsap.registerPlugin(useGSAP);
 
 export const NAVIGATION_START = 'libretv-navigation-start';
 
-/** 不伪造百分比：请求期间循环光带，真正完成后铺满并收起。 */
+/** 仅跨页面导航显示光带，页面内搜索和后台请求不触发。 */
 export function NavigationProgress() {
   const pathname = usePathname();
-  const params = useSearchParams();
-  const currentUrl = `${pathname}${params.size ? `?${params.toString()}` : ''}`;
   const [target, setTarget] = useState<string | null>(null);
-  const fetching = useIsFetching();
-  const navigating = !!target && target !== currentUrl;
-  const active = fetching > 0 || navigating;
+  const active = !!target && target !== pathname;
   const root = useRef<HTMLDivElement>(null);
   const bar = useRef<HTMLDivElement>(null);
   const started = useRef(false);
 
-  useEffect(() => { if (target === currentUrl) setTarget(null); }, [target, currentUrl]);
+  useEffect(() => { if (target === pathname) setTarget(null); }, [target, pathname]);
   useEffect(() => {
     function start(url: string) {
       const next = new URL(url, location.href);
-      if (next.origin !== location.origin || `${next.pathname}${next.search}` === `${location.pathname}${location.search}`) return;
-      const query = next.searchParams.toString();
-      setTarget(`${next.pathname}${query ? `?${query}` : ''}`);
+      if (next.origin !== location.origin || next.pathname === location.pathname) return;
+      setTarget(next.pathname);
     }
     function click(event: MouseEvent) {
       if (event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;

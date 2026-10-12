@@ -17,6 +17,18 @@ export function cmsRequestHeaders(): Record<string, string> {
   return { ...UA_HEADERS };
 }
 
+/** 保留源地址的鉴权等参数，覆盖操作参数，避免重复问号或重复 ac/wd。 */
+export function cmsListUrl(base: string, wd?: string, page = 1): string {
+  const url = new URL(base);
+  url.searchParams.set('ac', 'videolist');
+  url.searchParams.set('pg', String(page));
+  url.searchParams.delete('ids');
+  url.searchParams.delete('t');
+  if (wd === undefined) url.searchParams.delete('wd');
+  else url.searchParams.set('wd', wd);
+  return url.href;
+}
+
 /** 搜索响应 → 统一结果列表 */
 export function parseSearchList(
   data: unknown,
@@ -187,7 +199,8 @@ export function normalizeTitle(s: string): string {
 export function isRelevant(name: string, wd: string): boolean {
   const nName = normalizeTitle(name);
   const nWd = normalizeTitle(wd);
-  if (!nName || !nWd) return true; // 空关键词不参与过滤
+  if (!nWd) return true; // 空关键词不参与过滤
+  if (!nName) return false;
   if (nName.includes(nWd)) return true;
   const tokens = wd.trim().split(/\s+/);
   if (tokens.length > 1) {
@@ -201,9 +214,24 @@ export function isRelevant(name: string, wd: string): boolean {
 
 /**
  * 结果相关性过滤：丢弃与关键词无关的条目。
- * 过滤后为空时回退到原列表——宁可多展示也不把源站唯一可用的结果清空。
+ * 全部不相关时返回空列表，不能把源站默认列表当作搜索结果。
  */
 export function filterRelevantResults<T extends { name?: string }>(items: T[], wd: string): T[] {
-  const filtered = items.filter((item) => isRelevant(item.name || '', wd));
-  return filtered.length > 0 ? filtered : items;
+  return items.filter((item) => isRelevant(item.name || '', wd));
+}
+
+/** 展示层相关度排序：精确标题优先，同档保留源返回顺序，不修改缓存数组。 */
+export function sortSearchResults<T extends { name?: string }>(items: T[], wd: string): T[] {
+  const query = normalizeTitle(wd);
+  if (!query) return [...items];
+  const tokens = wd.trim().split(/\s+/).map(normalizeTitle).filter(Boolean);
+  return items.map((item) => {
+    const title = normalizeTitle(item.name || '');
+    const rank = !title ? 4
+      : title === query ? 0
+      : title.includes(query) ? 1
+      : tokens.length > 1 && tokens.every((token) => title.includes(token)) ? 2
+      : 3;
+    return { item, rank };
+  }).sort((a, b) => a.rank - b.rank).map(({ item }) => item);
 }

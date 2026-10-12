@@ -10,18 +10,19 @@ import { NAVIGATION_START } from '@/components/navigation-progress';
 import { AggregatedCard, aggregateResults, type AggregatedGroup } from '@/components/video-card';
 import { useAppStore, resolveSource, isInDisabledSubscription, isSourceDisabled } from '@/lib/store';
 import { api } from '@/lib/client-api';
+import { sortSearchResults } from '@/lib/cms-parser';
 import { playbackLinesKey } from '@/lib/playback-lines';
 import type { SourceSearchOutcome } from '@/lib/types';
 import { SearchHistoryDropdown, useSearchHistory } from '@/components/search-history';
 import { buildWatchUrl, cn, validateSourceUrl } from '@/lib/utils';
 import { useToast } from '@/components/toast';
-import { EmptyState, ErrorState } from '@/components/states';
+import { EmptyState, ErrorState, Spinner } from '@/components/states';
 import { Icon } from '@/components/icon';
 import { useAuth } from '@/components/auth';
 
 /**
  * 首页：搜索（URL ?s= 驱动，可后退/分享）+ 豆瓣推荐。
- * 搜索状态由 React Query 管理，按返回顺序展示合并后的影片。
+ * 搜索状态由 React Query 管理，按标题相关度展示合并后的影片。
  */
 /** 搜索结果分批渲染的批大小：一次挂载上千张卡片会明显掉帧 */
 const RESULT_PAGE_SIZE = 60;
@@ -110,7 +111,6 @@ function HomeContent() {
       return;
     }
     const target = `/?s=${encodeURIComponent(query)}`;
-    window.dispatchEvent(new CustomEvent(NAVIGATION_START, { detail: target }));
     router.push(target, { scroll: false });
     searchHistory.record(query);
   };
@@ -121,7 +121,7 @@ function HomeContent() {
     runSearch(text);
   };
 
-  const isSearching = Boolean(urlQuery) && searchQuery.isFetching && !searchQuery.data;
+  const isSearching = Boolean(urlQuery) && searchQuery.isFetching;
   // 聚合数据未就绪时，用已结算源的结果增量渲染（健康源不再等坏源超时）
   const streamedList = useMemo(
     () => streamedOutcomes.flatMap((o) => o.list),
@@ -131,8 +131,11 @@ function HomeContent() {
     () => searchQuery.data?.list ?? (isSearching ? streamedList : []),
     [searchQuery.data, isSearching, streamedList]
   );
-  // 同一影片合并为一张卡片，后到的来源不改变已有卡片顺序。
-  const groups = useMemo(() => aggregateResults(list), [list]);
+  // 缓存和流式结果统一按相关度排列卡片；来源内部顺序不变。
+  const groups = useMemo(() => {
+    const keyword = urlQuery.trim().slice(0, 100);
+    return sortSearchResults(aggregateResults(list), keyword);
+  }, [list, urlQuery]);
 
   // 分批渲染：只在切换关键词时重置，增量结果不影响已加载的批次
   const [visibleCount, setVisibleCount] = useState(RESULT_PAGE_SIZE);
@@ -259,7 +262,7 @@ function HomeContent() {
       {site.announcement && <details className="cinema-announcement"><summary><Icon name="alert" className="w-4 h-4" /><span>网站公告</span><span className="cinema-announcement-preview">{site.announcement.split('\n')[0]}</span><Icon name="chevronDown" className="w-4 h-4 ml-auto" /></summary><p>{site.announcement}</p></details>}
         {/* 搜索结果 */}
         {urlQuery && (
-          <section aria-label="搜索结果" className="mb-10">
+          <section aria-label="搜索结果" aria-busy={isSearching} className="mb-10">
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-sm text-muted">
                 “<span className="text-content">{urlQuery}</span>” 的搜索结果
@@ -268,6 +271,13 @@ function HomeContent() {
                 </span>
               </h2>
             </div>
+
+            {isSearching && (
+              <div role="status" className="flex items-center gap-3 mb-4 rounded-xl border border-accent/20 bg-accent/5 px-4 py-3 text-sm text-accent">
+                <Spinner size="sm" className="motion-reduce:animate-none" />
+                <span>{groups.length > 0 ? '继续搜索中，更多结果正在加载…' : '正在搜索，请稍候…'}</span>
+              </div>
+            )}
 
             {selectedSources.length === 0 ? (
               <NoSourceGuide hasSources={customAPIs.length > 0 || envSources.length > 0} />

@@ -176,9 +176,9 @@ export const api = {
     }
   },
 
-  /** 点播源探活：以搜索 "test" 的耗时与结果量衡量可用性 */
+  /** 点播源检测：区分列表可达与已验证的关键词搜索能力。 */
   testSource: (url: string, type?: SourceConfig['type']) =>
-    request<{ ok: boolean; ms: number; count?: number; error?: string }>('/api/source/test', {
+    request<{ ok: boolean; ms: number; count?: number; error?: string; capabilities?: import('./source-capability').SourceCapabilities }>('/api/source/test', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url, type }),

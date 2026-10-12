@@ -62,6 +62,22 @@ afterEach(() => {
 });
 
 describe('POST /api/search', () => {
+  it.each([false, true])('忽略关键词的列表源被排除且不继续翻页，stream=%s', async (stream) => {
+    const fetchSpy = vi.fn(async (_input: RequestInfo | URL) => {
+      void _input;
+      return new Response(cmsList([{ vod_id: 1, vod_name: '金牌调解' }], 3227));
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+    const response = await POST(makeRequest({ wd: `无关列表验证${stream}`, sources: [{ ...SOURCES[0], url: `https://cms-a.example.com/api/?ac=list&token=${stream}` }] }, stream));
+    const text = await response.text();
+    const data = JSON.parse(stream ? text.trim().split('\n').at(-1)! : text) as SearchResponse;
+    expect(data.list).toEqual([]);
+    expect(data.failures).toMatchObject([{ sourceKey: 'a', error: '搜索响应仅含无关列表，已排除该源结果' }]);
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const requested = new URL(String(fetchSpy.mock.calls[0]?.[0]));
+    expect(requested.searchParams.get('ac')).toBe('videolist');
+    expect(requested.searchParams.get('wd')).toBe(`无关列表验证${stream}`);
+  });
   it('央视适配沿用聚合搜索并读取官方分页，返回可用于详情的ID', async () => {
     const fetchSpy = vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input));

@@ -44,11 +44,15 @@ interface LivePlayerProps {
   url: string;
   title: string;
   /** 上一台/下一台：传入时注册为播放器控制条按钮（全屏内也可操作） */
+  onPlaybackStateChange?: (state: 'loading' | 'playing' | 'error') => void;
+  onTryAlternative?: () => void;
+  switchingLine?: boolean;
+  lineMessage?: string;
   onPrevChannel?: () => void;
   onNextChannel?: () => void;
 }
 
-export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePlayerProps) {
+export function LivePlayer({ url, title, onPrevChannel, onNextChannel, onPlaybackStateChange, onTryAlternative, switchingLine, lineMessage }: LivePlayerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const artRef = useRef<any>(null);
@@ -66,6 +70,10 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
   const [osdTitle, setOsdTitle] = useState('');
   const osdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    onPlaybackStateChange?.(error ? 'error' : loading ? 'loading' : 'playing');
+  }, [error, loading, onPlaybackStateChange]);
 
   // url 变化即换台：显示频道名 2.5s
   useEffect(() => {
@@ -91,6 +99,8 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
     setShowPoster(true);
 
     let playbackStarted = false;
+    let failed = false;
+    const fail = (message: string) => { failed = true; setError(message); };
     let disposed = false;
     let destroyed = false;
     /** 原生播放注册的 error 监听清理函数（切台/销毁时调用） */
@@ -131,7 +141,7 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
           setupNative(video, proxyUrl(url), false, failMessage);
           return;
         }
-        setError(failMessage || '该地址不是可播放的直播流（内容可能是文件或错误提示）');
+        fail(failMessage || '该地址不是可播放的直播流（内容可能是文件或错误提示）');
       };
       video.addEventListener('error', onError);
       nativeCleanup = () => video.removeEventListener('error', onError);
@@ -185,7 +195,7 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
             hls.recoverMediaError();
             return;
           }
-          setError('直播流解码失败，可能该频道编码不受当前浏览器支持，请尝试其他频道');
+          fail('直播流解码失败，可能该频道编码不受当前浏览器支持，请尝试其他频道');
           return;
         }
         if (!playbackStarted) {
@@ -199,6 +209,13 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
             setupHls(video, proxyUrl(url), 'proxy');
             return;
           }
+          // 明确的上游 HTTP 错误无需再按原生容器请求同一失效地址。
+          if (stage === 'proxy' && httpCode && httpCode >= 400) {
+            hls.destroy();
+            hlsRef.current = null;
+            fail(`直播线路不可用${codeHint}，请切换同频道备用线路或选择其他频道`);
+            return;
+          }
           // HLS 直连与代理均失败：可能是"无 .m3u8 后缀但内容是 MP4"的源，回退原生播放
           showHint('HLS 解析失败，尝试原生播放...');
           setupNative(video, url, true, `直播流加载失败${codeHint}，可能该频道已失效，请尝试其他频道`);
@@ -208,7 +225,7 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
           // 播放中网络抖动：尝试恢复拉流；连续失败达到阈值则报错退出
           liveNetRetryCount++;
           if (liveNetRetryCount > 5) {
-            setError(`直播流中断${codeHint}，该源可能已失效，请尝试其他频道`);
+            fail(`直播流中断${codeHint}，该源可能已失效，请尝试其他频道`);
             return;
           }
           hls.startLoad();
@@ -227,12 +244,12 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
       try {
         Mpegts = (await import('mpegts.js')).default;
       } catch {
-        setError('FLV 播放模块加载失败，请检查网络后重试');
+        fail('FLV 播放模块加载失败，请检查网络后重试');
         return;
       }
       if (disposed || destroyed) return;
       if (!Mpegts.getFeatureList().mseLivePlayback) {
-        setError('当前浏览器不支持 FLV 直播播放');
+        fail('当前浏览器不支持 FLV 直播播放');
         return;
       }
       const player = Mpegts.createPlayer(
@@ -259,7 +276,7 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
           void setupFlv(video, proxyUrl(url), false);
           return;
         }
-        setError(`直播流加载失败（${errType}），请尝试其他频道`);
+        fail(`直播流加载失败（${errType}），请尝试其他频道`);
       });
       player.play().catch(() => {});
     };
@@ -311,7 +328,7 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
       backdrop: true,
       playsInline: true,
       airplay: true,
-      theme: '#2563eb',
+      theme: '#19cbb4',
       controls,
       lang: navigator.language.toLowerCase().startsWith('zh') ? 'zh-cn' : 'en',
       moreVideoAttr: { playsInline: true },
@@ -338,11 +355,13 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
       playbackStarted = true;
       setLoading(false);
       setShowPoster(false);
+      failed = false;
       setError('');
     });
     art.on('video:error', () => {
       // mpegts 走自身 ERROR 事件；这里兜底其它未知错误
-      if (!mpegtsRef.current) setError('视频播放失败，请尝试其他频道');
+      // 引擎自身负责直连、代理和原生回退，避免中途 error 提前覆盖加载状态。
+      if (playbackStarted && !hlsRef.current && !mpegtsRef.current) fail('视频播放失败，请尝试其他频道');
     });
     art.on('ready', () => {
       // 直播隐藏进度条（ArtPlayer 无原生 isLive 开关）
@@ -354,8 +373,8 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
 
     // 15s 内未起播则提示
     const startTimer = setTimeout(() => {
-      if (!playbackStarted && !disposed && !destroyed) {
-        setError('频道加载超时，可能该源已失效，请尝试其他频道');
+      if (!playbackStarted && !failed && !disposed && !destroyed) {
+        fail('频道加载超时，可能该源已失效，请尝试其他频道');
       }
     }, 15000);
 
@@ -405,8 +424,12 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
         </div>
       )}
       {error && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/80">
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-black/90">
           <p className="text-danger text-sm px-4 text-center">{error}</p>
+          {onTryAlternative && <button className="btn-primary text-sm" disabled={switchingLine} onClick={onTryAlternative}>
+            {switchingLine ? <><Spinner size="sm" /> 检测备用线路中</> : '切换同频道备用线路'}
+          </button>}
+          {lineMessage && <p role="status" className="text-xs text-white/70 px-4 text-center">{lineMessage}</p>}
           <button
             className="btn-ghost text-xs !bg-white/10 !text-white !border-white/20"
             onClick={() => {

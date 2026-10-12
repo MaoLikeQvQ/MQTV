@@ -7,6 +7,7 @@ import {
   isAdultContent,
   isRelevant,
   normalizeTitle,
+  sortSearchResults,
   parseDetail,
   parseDetailPageHtml,
   parseSearchList,
@@ -181,7 +182,7 @@ describe('isRelevant', () => {
 
   it('空关键词或空标题不参与过滤', () => {
     expect(isRelevant('任意标题', '')).toBe(true);
-    expect(isRelevant('', '任意')).toBe(true);
+    expect(isRelevant('', '任意')).toBe(false);
   });
 });
 
@@ -199,8 +200,36 @@ describe('filterRelevantResults', () => {
     expect(out.map((i) => i.name)).toEqual(['摔跤吧！爸爸', '摔跤吧!爸爸【影视解说】']);
   });
 
-  it('全部不相关时回退为原列表', () => {
+  it('全部不相关时返回空列表', () => {
     const junk = [{ name: '爸爸当家' }, { name: '爸爸别走' }];
-    expect(filterRelevantResults(junk, wd)).toEqual(junk);
+    expect(filterRelevantResults(junk, wd)).toEqual([]);
+  });
+});
+
+describe('搜索结果相关度排序', () => {
+  it('晚到的龙猫正片排在无关结果和解说前，并保留同名不同年份的顺序', () => {
+    const items = [
+      { name: '小赛罗拓荒者' }, { name: '有点神的日常' },
+      { name: '龙猫[电影解说]' }, { name: '龙猫', year: '1988' },
+      { name: '龙猫', year: '2018' },
+    ];
+    const original = [...items];
+    expect(sortSearchResults(items, '龙猫')).toEqual([
+      items[3], items[4], items[2], items[0], items[1],
+    ]);
+    expect(items).toEqual(original);
+    expect(sortSearchResults(items.slice(0, 2), '龙猫')).toEqual(items.slice(0, 2));
+  });
+
+  it('忽略大小写和标点差异，完整匹配优先于多词匹配，空标题最后', () => {
+    const items = [
+      { name: '' }, { name: '其他' }, { name: 'Man of Iron' },
+      { name: 'Iron Man 2' }, { name: 'IRON—MAN' },
+    ];
+    expect(sortSearchResults(items, 'Iron Man')).toEqual([
+      items[4], items[3], items[2], items[1], items[0],
+    ]);
+    expect(sortSearchResults(items, '   ')).toEqual(items);
+    expect(sortSearchResults(items, '！')).toEqual(items);
   });
 });

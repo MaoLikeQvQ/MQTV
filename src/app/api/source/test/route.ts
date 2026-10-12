@@ -4,13 +4,14 @@ import { checkSourceAllowed, searchSpider } from '@/lib/spider-bridge';
 import { isSpiderSource } from '@/lib/spider-source';
 import type { SourceConfig } from '@/lib/types';
 import { fetchUpstream } from '@/lib/fetch-utils';
-import { parseSearchList } from '@/lib/cms-parser';
+import { cmsListUrl, cmsRequestHeaders, parseSearchList } from '@/lib/cms-parser';
+import { probeSearchCapability, type SourceCapabilities } from '@/lib/source-capability';
 import { isCctvSource } from '@/lib/cctv-source';
 import { searchCctv } from '@/lib/cctv-spider';
 
 export const runtime = 'nodejs';
 
-/** 点播源探活：以搜索 "test" 的响应耗时与结果量衡量可用性 */
+/** 分别检测列表可用性与关键词搜索能力，列表响应不能作为搜索成功证据。 */
 export async function POST(req: Request) {
   const guarded = await guardAdminRequest(req);
   if (guarded) return guarded;
@@ -34,29 +35,45 @@ export async function POST(req: Request) {
   }
 
   const start = Date.now();
+  const capabilities: SourceCapabilities = { list: null, search: 'unknown' };
+  let listError: string | undefined;
   try {
+    const source = { key: 'test', name: 'test', url, type };
+    let readSearch: (keyword: string) => Promise<{ name?: string }[]>;
+    let keyword = '新闻';
     if (isSpiderSource({ type })) {
-      const { list } = await searchSpider({ key: 'test', name: 'test', url, type }, '新闻', 1, AbortSignal.timeout(6000));
-      return NextResponse.json({ ok: true, ms: Date.now() - start, count: list.length });
+      readSearch = async (wd) => (await searchSpider(source, wd, 1, AbortSignal.timeout(6000))).list;
+    } else if (isCctvSource(url)) {
+      keyword = '新闻联播';
+      readSearch = async (wd) => (await searchCctv(source, wd, 1, AbortSignal.timeout(6000))).list;
+    } else {
+      const readCms = async (wd?: string) => {
+        const res = await fetchUpstream(cmsListUrl(url, wd), { timeoutMs: 6000, retries: 0, headers: cmsRequestHeaders() });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (!data || !Object.prototype.hasOwnProperty.call(data, 'list')) throw new Error('接口未返回资源列表');
+        return parseSearchList(data, source);
+      };
+      capabilities.list = false;
+      try {
+        const list = await readCms();
+        capabilities.list = true;
+        keyword = list.find((item) => item.name.trim())?.name || '';
+      } catch (error) {
+        listError = error instanceof Error ? error.message : '列表请求失败';
+      }
+      readSearch = readCms;
     }
-    if (isCctvSource(url)) {
-      const { list } = await searchCctv({ key: 'test', name: '央视公开点播', url }, '新闻联播', 1, AbortSignal.timeout(6000));
-      return NextResponse.json({ ok: true, ms: Date.now() - start, count: list.length });
-    }
-    const res = await fetchUpstream(`${url}?ac=videolist&wd=test`, {
-      timeoutMs: 6000,
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36', Accept: 'application/json' },
+    const result = await probeSearchCapability(readSearch, keyword);
+    capabilities.search = result.search;
+    return NextResponse.json({ ok: result.search === 'supported', ms: Date.now() - start, count: result.count, capabilities, listError,
+      ...(result.search !== 'supported' ? { error: result.search === 'unsupported' ? '接口未按关键词筛选，不能用于搜索' : '搜索能力未确认' } : {}),
     });
-    const ms = Date.now() - start;
-    if (!res.ok) {
-      return NextResponse.json({ ok: false, ms, error: `HTTP ${res.status}` });
-    }
-    const data = await res.json();
-    const list = parseSearchList(data, { key: 'test', name: 'test', url });
-    return NextResponse.json({ ok: true, ms, count: list.length });
   } catch (err) {
     return NextResponse.json({
       ok: false,
+      capabilities,
+      listError,
       ms: Date.now() - start,
       error: err instanceof Error ? (err.name === 'TimeoutError' || err.name === 'AbortError' ? '超时' : err.message) : '请求失败',
     });

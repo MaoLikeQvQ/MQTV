@@ -24,6 +24,7 @@ import { Spinner } from '@/components/states';
 import { useAuth } from '@/components/auth';
 import { allLiveSources, useAppStore } from '@/lib/store';
 import { cn } from '@/lib/utils';
+import { liveChannelKey } from '@/lib/live-channel-match';
 import { SmartImage } from '@/components/smart-image';
 
 /**
@@ -53,6 +54,9 @@ function LiveContent() {
   const { verified, site } = useAuth();
   const { appearance, toggleAppearance } = useCinemaAppearance();
   const drawerRef = useRef<HTMLElement>(null);
+  const [playbackState, setPlaybackState] = useState<'loading' | 'playing' | 'error'>('loading');
+  const [switchingLine, setSwitchingLine] = useState(false);
+  const [lineMessage, setLineMessage] = useState('');
   const [copied, setCopied] = useState(false);
   // 移动端频道抽屉开合
   const [listOpen, setListOpen] = useState(false);
@@ -120,6 +124,8 @@ function LiveContent() {
 
   useEffect(() => {
     setLogoFailed(false);
+    setPlaybackState('loading');
+    setLineMessage('');
   }, [currentChannel?.url]);
   useEffect(() => {
     currentChannelRef.current = currentChannel;
@@ -146,6 +152,31 @@ function LiveContent() {
     },
     [router]
   );
+
+  const alternateChannels = useMemo(() => currentChannel
+    ? channels.filter((c) => c.url !== currentUrl && liveChannelKey(c.name) === liveChannelKey(currentChannel.name))
+    : [], [channels, currentChannel, currentUrl]);
+
+  const tryAlternative = async () => {
+    if (switchingLine) return;
+    setSwitchingLine(true);
+    setLineMessage('正在检测同频道备用线路…');
+    const originalUrl = currentUrl;
+    try {
+      const { results } = await api.liveProbe(alternateChannels.slice(0, 8).map((c) => c.url));
+      if (new URLSearchParams(window.location.search).get('url') !== originalUrl) return;
+      const available = results.filter((r) => r.ok).sort((a, b) =>
+        Number(b.level === 'segment') - Number(a.level === 'segment') || (a.ms ?? Infinity) - (b.ms ?? Infinity));
+      const next = alternateChannels.find((c) => c.url === available[0]?.url);
+      if (next) selectChannel(next);
+      else setLineMessage('本轮未找到可达的备用线路，请选择其他频道。');
+    } catch {
+      if (new URLSearchParams(window.location.search).get('url') === originalUrl)
+        setLineMessage('备用线路检测失败，请稍后重试。');
+    } finally {
+      setSwitchingLine(false);
+    }
+  };
 
   const handleFilteredChange = useCallback((list: LiveChannelItem[]) => {
     filteredRef.current = list;
@@ -271,7 +302,7 @@ function LiveContent() {
         <div className="live-heading"><div><p className="cinema-eyebrow">LIVE TV</p><h1>直播</h1></div><span>{loading ? '正在加载' : `${channels.length} 个频道 · ${sources.length} 个直播源`}</span></div>
         <div className="live-layout">
           {/* 主栏：播放器 + 信息条 + 节目单 */}
-          <div className="min-w-0">
+          <div className="live-watch-column">
             <div className="live-stage">
               {currentUrl ? (
                 <LivePlayer
@@ -279,6 +310,10 @@ function LiveContent() {
                   title={currentChannel?.name || '直播'}
                   onPrevChannel={goPrevChannel}
                   onNextChannel={goNextChannel}
+                  onPlaybackStateChange={setPlaybackState}
+                  onTryAlternative={alternateChannels.length > 0 ? () => void tryAlternative() : undefined}
+                  switchingLine={switchingLine}
+                  lineMessage={lineMessage}
                 />
               ) : (
                 <div className="live-placeholder" role="status">
@@ -317,7 +352,7 @@ function LiveContent() {
                       <span className="tag bg-chip text-faint shrink-0">{currentChannel.group}</span>
                     )}
                   </div>
-                  <p className="text-xs text-faint truncate mt-0.5">正在直播{currentChannel.group ? ` · ${currentChannel.group}` : ''}</p>
+                  <p className="text-xs text-faint truncate mt-0.5">{playbackState === 'playing' ? '正在直播' : playbackState === 'error' ? '播放失败' : '正在连接'}{currentChannel.group ? ` · ${currentChannel.group}` : ''}</p>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   <button
@@ -424,10 +459,10 @@ function LiveContent() {
 
             {/* 节目单 */}
             {currentChannel && (
-              <section className="live-programmes">
-                <h2 className="text-sm font-semibold text-content mb-2.5">节目单</h2>
-                <LiveEpgPanel epgUrl={currentChannel.epg} tvgId={currentChannel.tvgId} />
-              </section>
+              <details className="live-programmes">
+                <summary>节目单 <span>展开查看节目安排</span></summary>
+                <div className="live-programmes-content"><LiveEpgPanel epgUrl={currentChannel.epg} tvgId={currentChannel.tvgId} /></div>
+              </details>
             )}
           </div>
 

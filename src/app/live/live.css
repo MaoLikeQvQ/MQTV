@@ -83,3 +83,38 @@
   .live-programmes { padding-top: 20px; }
   .live-footer { padding: 20px 16px 80px; font-size: 9px; }
 }
+
+/* 直播工作台：用窗口剩余高度分配播放器，不再由宽度撑高整页。 */
+.live-programmes { padding: 0; border: 1px solid rgb(var(--c-line)); border-radius: 10px; background: rgb(var(--c-surface)); overflow: hidden; }
+.live-programmes summary { cursor: pointer; padding: 12px 16px; font-size: 12px; font-weight: 550; }
+.live-programmes summary span { margin-left: 12px; color: rgb(var(--c-faint)); font-size: 11px; font-weight: 400; }
+.live-programmes-content { max-height: 180px; overflow-y: auto; padding: 0 16px 12px; }
+.live-sidebar-heading { flex-shrink: 0; }
+@media (min-width: 1024px) {
+  .cinema-live { height: 100dvh; min-height: 0; overflow: hidden; }
+  .live-topbar { position: relative; flex-shrink: 0; }
+  .live-topbar-inner { height: 60px; }
+  .live-main { min-height: 0; display: flex; flex-direction: column; padding: 18px 32px 14px; }
+  .live-heading { flex-shrink: 0; align-items: center; margin-bottom: 14px; }
+  .live-heading > div { display: flex; align-items: center; gap: 12px; }
+  .live-heading .cinema-eyebrow { margin: 0; font-size: 9px; letter-spacing: 2px; }
+  .live-heading h1 { font-size: 20px; letter-spacing: -.3px; }
+  .live-layout { flex: 1; min-height: 0; align-items: stretch; gap: 18px; }
+  .live-watch-column { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .live-stage { flex: 1; min-height: 0; aspect-ratio: auto; border: 1px solid rgb(var(--c-line) / .6); }
+  .live-now-playing { flex-shrink: 0; padding: 12px 2px; border-bottom: 0; }
+  .live-programmes { flex-shrink: 0; }
+  .live-programmes-content { max-height: min(180px, 23dvh); }
+  .live-channel-sidebar { position: relative; top: auto; height: 100%; min-height: 0; }
+  .live-footer { flex-shrink: 0; padding: 10px 32px; }
+}
+@media (min-width: 1024px) and (max-width: 1199px) {
+  .live-main { padding-left: 24px; padding-right: 24px; }
+  .live-now-playing { gap: 8px; }
+  .live-now-playing .tag { max-width: 90px; overflow: hidden; text-overflow: ellipsis; }
+}
+@media (max-width: 1023px) {
+  .live-watch-column { min-width: 0; }
+  .live-programmes { margin-top: 12px; }
+}
+.live-stage .art-progress { display: none !important; }
